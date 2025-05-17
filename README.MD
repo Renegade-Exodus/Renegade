@@ -6,7 +6,7 @@ Visit http://www.rgbbs.info for a list of past changes and current updates.
 The Renegade Dev team is always looking for new talent to join and help out.  If interested please email either one of us here on Git.
 
 My coding partner Lee Woodridge has not been heard from in over a year.   When we set this up on GitHub we used his account, as he liked this better than just
-swapping code back and forth.  Over time I come to appreciate it as well.   I fear he may remove his account and the storage for the code will be lost.  So,
+swapping code back and forth.  Over time I came to appreciate it as well.   I fear he may remove his account and the storage for the code will be lost.  So,
 in that sense, I am moving it back to my account "just in case".
 
 Last release I made was in Sept. 2024, and I made a few minor changes since I released that version, but nothing worth a "full" release.  I will slowly update this as I feel
