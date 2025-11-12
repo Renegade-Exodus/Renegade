@@ -410,9 +410,7 @@ BEGIN
         BEGIN
           IF (General.NewUserQToggles[14] = FALSE) OR (General.ForgotPWQuestion = '') OR (ThisUser.ForgotPWAnswer = '') OR
              (CoSysOp) THEN
-            HangUp := TRUE;
-                  If (HangUpKick) THEN QuitAfterDone:=TRUE
-
+            HangUp := TRUE
           ELSE
             BEGIN
               lRGLngStr(186,FALSE); { Forgot Password Question Prompt }
@@ -423,8 +421,6 @@ BEGIN
                   SL1(S);
                   SendShortMessage(1,S);
                   HangUp := TRUE;
-                  If (HangUpKick) THEN QuitAfterDone:=TRUE;
-
                END
               ELSE
                 BEGIN
@@ -451,8 +447,6 @@ BEGIN
           Inc(Tries);
           IF (Tries >= General.MaxLogonTries) THEN
             HangUp := TRUE;
-                  If (HangUpKick) THEN QuitAfterDone:=TRUE;
-
           Ok := FALSE;
         END;
     END;
@@ -463,7 +457,6 @@ BEGIN
         lRGLngStr(120,FALSE); (*Print('You don''t have the required ACS to logon to this node!');*)
       SysOpLog(ThisUser.Name+': Attempt to logon node '+IntToStr(ThisNode)+' without access.');
       HangUp := TRUE;
-                  If (HangUpKick) THEN QuitAfterDone:=TRUE;
     END;
   IF ((Ok) AND (General.ShuttleLog) AND (LockedOut IN ThisUser.SFlags)) THEN
     BEGIN
@@ -472,7 +465,6 @@ BEGIN
         lRGLngStr(121,FALSE); (*Print('You have been locked out of the BBS by the SysOp.');*)
       SysOpLog(ThisUser.Name+': Attempt to access system when locked out^8 <--');
       HangUp := TRUE;
-                  If (HangUpKick) THEN QuitAfterDone:=TRUE;
     END;
   IF (UserNum > 0) AND (Onnode(UserNum) > 0) AND NOT (CoSysOp) THEN
     BEGIN
@@ -480,7 +472,6 @@ BEGIN
       IF (NoFile) THEN
         lRGLngStr(122,FALSE); (*Print('You are already logged in on another node!');*)
       HangUp := TRUE;
-                  If (HangUpKick) THEN QuitAfterDone:=TRUE;
     END;
   IF (NOT FastLogon) AND (Ok) AND (NOT HangUp) AND (General.Birthdatecheck > 0) AND
      (ThisUser.LoggedOn MOD General.Birthdatecheck = 0) AND (ThisUser.Birthdate <> -1869054590) AND
@@ -500,7 +491,6 @@ BEGIN
           MHeader.Status := [];
           SeMail(1,MHeader);
           HangUp := TRUE;
-                  If (HangUpKick) THEN QuitAfterDone:=TRUE;
         END;
     END;
   UserOn := Ok;
@@ -731,7 +721,6 @@ BEGIN
     END;
     IF (Tries >= General.MaxLogonTries) THEN
       HangUp := TRUE;
-          If (HangUpKick) THEN QuitAfterDone:=TRUE;
   UNTIL (LoggedOn) OR (HangUp);
   CurMenu := SaveMenu;
   NewMenuToLoad := TRUE;
@@ -820,7 +809,6 @@ BEGIN
           Print('You must be using at least '+IntToStr(General.MinimumBaud)+' baud to call this BBS.');
           *)
         HangUp := TRUE;
-                If (HangUpKick) THEN QuitAfterDone:=TRUE;
         Exit;
       END;
     END
@@ -841,7 +829,6 @@ BEGIN
           *)
           lRGLngStr(114,FALSE);
         HangUp := TRUE;
-                If (HangUpKick) THEN QuitAfterDone:=TRUE;
         Exit;
       END;
     END
@@ -897,7 +884,6 @@ BEGIN
     REPEAT
       IF (UserNum <> - 1) AND (TTimes >= General.MaxLogonTries) THEN
         HangUp := TRUE;
-                If (HangUpKick) THEN QuitAfterDone:=TRUE;
       OldUser := ThisUser;
       IF (NOT GotName) THEN
       BEGIN
@@ -922,7 +908,6 @@ BEGIN
             *)
             lRGLngStr(117,FALSE);
           HangUp := TRUE;
-                  If (HangUpKick) THEN QuitAfterDone:=TRUE;
         END;
         IF (NOT HangUp) AND (UserNum = 0) THEN
         BEGIN
@@ -945,7 +930,6 @@ BEGIN
         *)
         lRGLngStr(117,FALSE);
       HangUp := TRUE;
-          If (HangUpKick) THEN QuitAfterDone:=TRUE;
     END;
     Ok := TRUE;
     Done := FALSE;
@@ -1038,7 +1022,6 @@ BEGIN
       *)
       lRGLngStr(117,FALSE);
     HangUp := TRUE;
-        If (HangUpKick) THEN QuitAfterDone:=TRUE;
   END;
   IF NOT (AACS(Liner.LogonACS)) AND (NOT HangUp) THEN
   BEGIN
@@ -1047,7 +1030,6 @@ BEGIN
       lRGLngStr(120,FALSE); (*Print('You don''t have the required ACS to logon to this node!');*)
     SysOpLog(ThisUser.Name+': Attempt to logon node '+IntToStr(ThisNode)+' without access.');
     HangUp := TRUE;
-        If (HangUpKick) THEN QuitAfterDone:=TRUE;
   END;
   IF ((LockedOut IN ThisUser.SFlags) AND (NOT HangUp)) THEN
   BEGIN
@@ -1068,8 +1050,7 @@ BEGIN
         lRGLngStr(124,FALSE); (*Print('You have insufficient credits for online time.');*)
       SysOpLog(ThisUser.Name+': insufficient credits for logon.');
       IF (General.CreditFreeTime < 1) THEN
-        HangUp := TRUE;
-                If (HangUpKick) THEN QuitAfterDone:=TRUE
+        HangUp := TRUE
       ELSE
       BEGIN
         ThisUser.TLToday := General.CreditFreeTime DIV General.Creditminute;
