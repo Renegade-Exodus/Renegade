@@ -275,7 +275,6 @@ CONST
   ColorAllowed: Boolean = TRUE;           { Are color codes allowed? }
   Echo: Boolean = TRUE;                   { Is text being echoed? (FALSE=use echo char) }
   HangUp: Boolean = TRUE;                 { Has user hung up? }
-  HangUpKick: Boolean = FALSE;            { Quit to DOS on hangup }
   TimedOut: Boolean = FALSE;              { Has user timed out? }
   NoFile: Boolean = TRUE;                 { Did last PFL() file not exist? }
   SLogging: Boolean = TRUE;               { Are we outputting to the SysOp log? }

@@ -158,7 +158,6 @@ VAR
 BEGIN
   Reliable := FALSE;
   Telnet := FALSE;
-  HangUpKick := FALSE;
   CallerIDNumber := '';
   Counter := 0;
   WHILE (Counter < ParamCount) DO
@@ -220,7 +219,7 @@ BEGIN
                 IF (SC(ParamStr(Counter),3) <> 'C') THEN
                   HangUpTelnet := TRUE;
                 Telnet := TRUE;
-                HangUpKick := TRUE;
+                QuitAfterDone := TRUE;
               END;
         'L' : LocalIOOnly := TRUE;
         'M' : BEGIN
