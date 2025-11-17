@@ -1524,7 +1524,7 @@ BEGIN
         IF (InCom) THEN
         BEGIN
           NL;
-          IF (PYNQ('Is this file located on a CDRom? ',0,FALSE)) THEN
+          IF (PYNQ('|09Is this file located on a CD-ROM? ',0,FALSE)) THEN
             Include(MemFileArea.FAFlags,FACDROm);
         END;
         DLX(FileInfo,-1,TransferFlags);
