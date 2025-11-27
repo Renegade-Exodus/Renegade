@@ -74,7 +74,7 @@ BEGIN
           END;
     'U' : CASE S[2] OF
             '#' : TopUserMCI := IntToStr(TopUserPtr^.UNum); { The Users Number }
-            'N' : TopUserMCI := AOnOff(UserPtr^.Name = ThisUser.Name,'^9','^0')+UserPtr^.Name+'^0'; { The Users Handle }
+            'N' : TopUserMCI := AOnOff(UserPtr^.Name = ThisUser.Name,'','')+UserPtr^.Name+''; { The Users Handle }
             'R' : TopUserMCI := UserPtr^.RealName; { The Users Real Name }
             'V' : TopUserMCI := RealToStr(TopUserPtr^.Info,0,TopUserPtr^.Decimal); { The Statistic Value }
           END;
