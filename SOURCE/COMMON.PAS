@@ -275,6 +275,7 @@ CONST
   ColorAllowed: Boolean = TRUE;           { Are color codes allowed? }
   Echo: Boolean = TRUE;                   { Is text being echoed? (FALSE=use echo char) }
   HangUp: Boolean = TRUE;                 { Has user hung up? }
+  HangUpKick: Boolean = FALSE;            { Quit to DOS on hangup }
   TimedOut: Boolean = FALSE;              { Has user timed out? }
   NoFile: Boolean = TRUE;                 { Did last PFL() file not exist? }
   SLogging: Boolean = TRUE;               { Are we outputting to the SysOp log? }
@@ -3549,8 +3550,8 @@ BEGIN
   GetDate(Year,Month,MDay,WDay);
   CASE B OF
     1 : VerLine := '|11R|03enegade |11B|03ulletin |11B|03oard |11S|03ystem|11, |08v|15'+General.Version;
-    2 : VerLine := '|11C|03opyright |11(|03c|11) 1991-'+IntToStr(Year)+' |14The Renegade Development Team';
-    3 : Verline := '|13Updates |05- |13http|05://|13www|05.|13rgbbs|05.|13info';
+    2 : VerLine := '|11C|03opyright |11(|03c|11) 1991-'+IntToStr(Year)+' |14The Renegade BBS Development Team';
+    3 : Verline := '|13Website |05- |13http|05://|13www|05.|13rgbbs|05.|13info';
   END;
 END;
 
