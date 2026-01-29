@@ -898,11 +898,13 @@ VAR
         IF PYNQ(lRGLngStr(223,TRUE),0,TRUE) THEN {"Enable lightbars?"}
           BEGIN
             Include(User.SFlags,LightBars);
+            Include(ThisUser.SFlags,LightBars);
             {Include(User.SFlags,LightBars);}
           END
         ELSE
           BEGIN
             Exclude(User.SFlags,LightBars);
+            Exclude(ThisUser.SFlags,LightBars);
             {Exclude(User.SFlags,LightBars);}
           END;
         Done1 := TRUE;
@@ -912,12 +914,14 @@ VAR
         IF (LightBars IN User.SFlags) OR (LightBars IN User.SFlags) THEN
           BEGIN
             Exclude(User.SFlags,LightBars);
+            Exclude(ThisUser.SFlags,LightBars);
             {Exclude(User.SFlags,LightBars);}
             Print('Lightbars disabled');
           END
         ELSE
           BEGIN
             Include(User.SFlags,LightBars);
+            Include(ThisUser.SFlags,LightBars);
             {Include(User.SFlags,LightBars);}
             Print('Lightbars enabled');
           END;

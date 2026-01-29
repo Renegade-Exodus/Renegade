@@ -82,7 +82,7 @@ VAR
   Counter: Byte;
   Counter1: Integer;
 
-Procedure OvrInitXMS; External;
+{Procedure OvrInitXMS; External;}
 {$L OVERXMS.OBJ }
 
 
@@ -158,6 +158,7 @@ VAR
 BEGIN
   Reliable := FALSE;
   Telnet := FALSE;
+  HangUpKick := FALSE;
   CallerIDNumber := '';
   Counter := 0;
   WHILE (Counter < ParamCount) DO
@@ -219,7 +220,7 @@ BEGIN
                 IF (SC(ParamStr(Counter),3) <> 'C') THEN
                   HangUpTelnet := TRUE;
                 Telnet := TRUE;
-                QuitAfterDone := TRUE;
+                HangUpKick := TRUE;
               END;
         'L' : LocalIOOnly := TRUE;
         'M' : BEGIN

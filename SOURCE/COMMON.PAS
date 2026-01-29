@@ -2689,9 +2689,20 @@ BEGIN
   IF (InCom) THEN
     PageLength := ThisUser.PageLen
   ELSE IF (General.WindowOn) AND NOT (InWFCMenu) THEN
-    PageLength := (MaxDisplayRows - 2)
+  BEGIN
+    { LOCAL: when reading messages, leave one extra line so we never scroll the header off the top }
+    IF (Reading_A_Msg) OR (ReadingMail) THEN
+      PageLength := (MaxDisplayRows - 3)
+    ELSE
+      PageLength := (MaxDisplayRows - 2);
+  END
   ELSE
-    PageLength := MaxDisplayRows;
+  BEGIN
+    IF (Reading_A_Msg) OR (ReadingMail) THEN
+      PageLength := (MaxDisplayRows - 1)
+    ELSE
+      PageLength := MaxDisplayRows;
+  END;
 END;
 
 FUNCTION GetKey: Word;

@@ -1,10 +1,4 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
-ReadAllMessages prompt now using lRGLngStr, was commented out for some reason
-Added SysOp log for non global newscan
-Added global new scan lang strings that weren't being used
-Added reading public messages list header to language file
-}
 UNIT Mail2;
 
 INTERFACE
@@ -13,6 +7,14 @@ USES
   Common;
 
 PROCEDURE Post(ReplyTo: LongInt; VAR TToI: FromToInfo; PvtMsg: Boolean);
+
+
+{---------------------------------------------------------------------------}
+{ Lightbar message selector (READP prompt #13)                              }
+{ Allows arrow-key selection + ENTER, or typing a message # directly.       }
+{---------------------------------------------------------------------------}
+PROCEDURE SelectMsgLightBar(VAR MsgNum: Word; HiMsg: Word; Pub: Boolean);
+
 PROCEDURE ReadAllMessages(MenuOption: Str50);
 PROCEDURE ScanMessages(MArea: Integer; AskUpDate: Boolean; MenuOption: Str50);
 PROCEDURE StartNewScan(MenuOption: Str50);
@@ -22,6 +24,7 @@ FUNCTION FirstNew: Word;
 IMPLEMENTATION
 
 USES
+  Crt,
   Dos,
   Common5,
   Mail0,
@@ -34,8 +37,577 @@ USES
   SysOp3,
   TimeFunc;
 
+{ TP7 helper: Delphi-style StrToInt replacement }
+FUNCTION StrToInt(SS: STRING): LongInt;
+VAR
+  V: LongInt;
+  Code: Integer;
+BEGIN
+  Val(SS, V, Code);
+  IF (Code <> 0) THEN
+    V := 0;
+  StrToInt := V;
+END;
+
+
+PROCEDURE RL_FlushKeys;
+BEGIN
+  { Flush any pending keystrokes so ENTER used to select a message }
+  { does not get consumed by ReadMsg's page-break prompt (Y/N/C). }
+  WHILE KeyPressed DO
+    ReadKey;
+
+  { Drain Renegade's unified input queue (keyboard + remote).      }
+  { InKey returns 0 when no key is pending; GetKey consumes keys.  }
+  WHILE (InKey <> 0) DO
+    GetKey;
+END;
+
 VAR
   TempLastRead: LongInt;
+
+  RL_EscPressed: Boolean; { TRUE if user hit ESC in RL lightbar }
+  RL_IgnoreRemaining: Boolean; { TRUE if user hit I in RL lightbar (Ignore Remaining) }
+  MsgSel_EscPressed: Boolean; { TRUE if user cancelled SelectMsgLightBar (ESC/Q) }
+  MsgSel_IgnoreRemaining: Boolean; { TRUE if user hit I in SelectMsgLightBar (Ignore Remaining) }
+  JumpMode: Boolean; { Numeric jump active only after J }
+{---------------------------------------------------------------------------}
+{ Lightbar message selector (READP prompt #13)                               }
+{ Allows arrow-key selection + ENTER, or typing a message # directly.        }
+{---------------------------------------------------------------------------}
+PROCEDURE SelectMsgLightBar(VAR MsgNum: Word; HiMsg: Word; Pub: Boolean);
+VAR
+  MHeader: MHeaderRec;
+  ADate: DateTime;
+  PerPage: Byte;
+  StartMsg: Word;
+  CurIdx: Byte;
+  Count: Byte;
+  MsgList: ARRAY[1..25] OF Word;
+  LineY: ARRAY[1..25] OF Byte;
+  BaseY: Byte;
+  W: Word;
+  C: Char;
+  S, S1, InStr: AStr;
+  Changed: Boolean;
+  V: Integer;
+  Code: Integer;
+
+  PROCEDURE BuildLine(MN: Word; VAR OutS: AStr);
+  VAR
+    StatusCh: Char;
+    FromS, ToS, SubjS: AStr;
+  JumpMode: Boolean;
+  BEGIN
+    LoadHeader(MN,MHeader);
+
+    IF (MDeleted IN MHeader.Status) THEN
+      StatusCh := 'D'
+    ELSE IF (UnValidated IN MHeader.Status) THEN
+      StatusCh := 'U'
+    ELSE IF (ToYou(MHeader) OR FromYou(MHeader)) THEN
+      StatusCh := '>'
+    ELSE IF (Pub) AND (TempLastRead < MHeader.Date) THEN
+      StatusCh := '*'
+    ELSE
+      StatusCh := ' ';
+
+    IF (MARealName IN MemMsgArea.MAFlags) THEN
+      FromS := UseName(MHeader.From.Anon,MHeader.From.Real)
+    ELSE
+      FromS := UseName(MHeader.From.Anon,MHeader.From.A1S);
+
+    IF ((MARealName IN MemMsgArea.MAFlags) AND (MHeader.MTo.Real <> '')) THEN
+      ToS := UseName(MHeader.MTo.Anon,MHeader.MTo.Real)
+    ELSE
+      ToS := UseName(MHeader.MTo.Anon,MHeader.MTo.A1S);
+
+    IF (MHeader.FileAttached = 0) THEN
+      SubjS := MHeader.Subject
+    ELSE
+      SubjS := StripName(MHeader.Subject);
+
+    PackToDate(ADate,MHeader.Date);
+
+    OutS := StatusCh+' '+PadLeftInt(MN,5)+' '+
+            PadLeftStr(FromS,18)+' '+
+            PadLeftStr(ToS,18)+' '+
+            PadLeftStr(SubjS,18)+' '+
+            ZeroPad(IntToStr(ADate.Month))+'/'+ZeroPad(IntToStr(ADate.Day))+'/'+ZeroPad(IntToStr(ADate.Year));
+  END;
+
+  PROCEDURE PadRight(VAR SS: AStr; N: Byte); FORWARD;
+
+  PROCEDURE DrawLine(I: Byte; Selected: Boolean);
+  VAR
+    L: AStr;
+    S2: AStr;
+    S3: AStr;
+  BEGIN
+    BuildLine(MsgList[I],L);
+
+    { hard guard }
+    IF (Length(L) < 2) THEN
+      L := L + '  ';
+
+    { Never paint columns 1-2: do not clear or print there. }
+    { Clear from column 3 to end-of-line only (ANSI safe) }
+    ANSIG(3,LineY[I]);
+    Prompt(#27'[0m');
+    Prompt(#27'[0K');
+    ANSIG(3,LineY[I]);
+
+    { Lightbar starts at column 3 and ends at column 79 }
+    S2 := Copy(L,3,255);
+    IF Selected THEN
+    BEGIN
+      ANSIG(3,LineY[I]);
+      Prompt(#27'[1;37;44m');    { white on blue }
+      S3 := S2; PadRight(S3,77); Prompt(S3);
+      Prompt(#27'[0m');
+    END
+    ELSE
+    BEGIN
+      ANSIG(3,LineY[I]);
+      Prompt(#27'[0m');
+{ stripped for remote ANSI safety }
+      S3 := S2; PadRight(S3,77); Prompt(S3);
+      Prompt(#27'[0m');
+    END;
+  END;
+
+  PROCEDURE PadRight(VAR SS: AStr; N: Byte);
+  BEGIN
+    IF (N = 0) THEN
+      EXIT;
+    IF (Length(SS) > N) THEN
+      SS := Copy(SS,1,N)
+    ELSE
+      WHILE (Length(SS) < N) DO
+        SS := SS + ' ';
+  END;
+
+
+  PROCEDURE DrawScreen;
+  VAR
+    I: Byte;
+    SaveAttr: Byte;
+  BEGIN
+    Cls;
+    { Header }
+    lRGLngStr(238,FALSE);
+    NL;
+    Print('Use arrow keys to select, ENTER to read, or type a message #.');
+    Print('ESC quits. PgUp/PgDn scroll. Home/End jump.');
+    NL;
+
+    PerPage := PageLength - 9;
+    IF (PerPage < 5) THEN
+      PerPage := 5;
+    IF (PerPage > 20) THEN
+      PerPage := 20;
+
+    { Start list immediately under the header }
+    { NOTE: CRT.WhereY is not reliable with ANSI/remote output; use a fixed baseline }
+    BaseY := 6;
+    IF (BaseY < 2) THEN BaseY := 2;
+Count := 0;
+    FOR I := 1 TO PerPage DO
+    BEGIN
+      IF (StartMsg + (I - 1) <= HiMsg) THEN
+      BEGIN
+        Inc(Count);
+        MsgList[Count] := StartMsg + (I - 1);
+        LineY[Count] := BaseY + (Count - 1);
+      END;
+    END;
+
+    FOR I := 1 TO Count DO
+      DrawLine(I, I = CurIdx);
+    { Draw numeric-jump prompt line cleanly (no CRT.WhereY dependence) }
+    SaveAttr := TextAttr;
+    TextColor(LightBlue);
+    TextBackground(Black);
+
+    ANSIG(1,22);
+    FOR I := 1 TO 80 DO
+      Prompt(' ');
+    ANSIG(1,22);
+    Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
+    Prompt(Chr(19)+Chr(9));
+    Prompt(InStr);
+    ANSIG(17 + Length(InStr),22);
+    GotoXY(17 + Length(InStr),22);
+{ leave cursor on numeric input field }
+    GotoXY(17 + Length(InStr), 22);
+    ANSIG(17 + Length(InStr), 22);
+  TextAttr := SaveAttr;
+  END;
+
+          PROCEDURE UpdatePrompt;
+CONST
+  PromptY = 22; { fixed: line above command bar in this screen }
+VAR
+  I: Integer;
+  X: Integer;
+  SaveAttr: Byte;
+BEGIN
+  SaveAttr := TextAttr;
+  TextColor(LightBlue);
+  TextBackground(Black);
+
+  IF OkAnsi THEN
+    Prompt(#27+'[0m'+#27+'[94;40m');
+  { Force visible local/remote attribute for the Jump/Msg# prompt }
+  Prompt(Chr(19)+Chr(9));
+  { Hard-clear the whole line first so no prior footer/path text bleeds through }
+  ANSIG(1, PromptY);
+  GotoXY(1, PromptY);
+  FOR I := 1 TO 80 DO
+    Prompt(' ');
+
+  { Redraw prompt + current digits }
+  ANSIG(1, PromptY);
+  GotoXY(1, PromptY);
+  Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
+    Prompt(Chr(19)+Chr(9));
+    Prompt(InStr);
+
+  { Keep BOTH remote and local cursor at end of input (prevents first-digit echo scribble) }
+  X := 17 + Length(InStr);
+  ANSIG(X, PromptY);
+  GotoXY(X, PromptY);
+  TextAttr := SaveAttr;
+END;
+PROCEDURE ClearPrompt;
+CONST
+  PromptY = 22;
+VAR
+  I: Integer;
+  SaveAttr: Byte;
+BEGIN
+  SaveAttr := TextAttr;
+  TextColor(LightBlue);
+  TextBackground(Black);
+  IF OkAnsi THEN
+    Prompt(#27+'[0m'+#27+'[94;40m');
+  { Force visible local/remote attribute for the Jump/Msg# prompt }
+  Prompt(Chr(19)+Chr(9));
+  ANSIG(1, PromptY);
+  GotoXY(1, PromptY);
+  FOR I := 1 TO 80 DO
+    Prompt(' ');
+  TextAttr := SaveAttr;
+END;
+
+BEGIN
+  IF (HiMsg = 0) THEN
+    Exit;
+
+  IF (MsgNum < 1) THEN
+    MsgNum := 1;
+  IF (MsgNum > HiMsg) THEN
+    MsgNum := HiMsg;
+
+  { If lightbars are off, fall back to direct numeric entry }
+  IF (NOT OkANSI) OR (NOT General.UseLightBars) OR (NOT (LightBars IN ThisUser.SFlags)) THEN
+  BEGIN
+  
+  NL;
+InStr := '';
+    UpdatePrompt;
+InputString(
+  'Message number (1-'+IntToStr(HiMsg)+') [Q=Quit]: ',
+  InStr,
+  5,
+  [AllowEscape],
+  Changed
+);
+
+IF (InStr <> '') AND (UpCase(InStr[1]) <> 'Q') THEN
+BEGIN
+  Val(InStr, V, Code);
+  IF Code = 0 THEN
+    MsgNum := V;
+  IF MsgNum < 1 THEN MsgNum := 1;
+  IF MsgNum > HiMsg THEN MsgNum := HiMsg;
+END;
+Exit;
+  END;
+
+  MsgSel_EscPressed := FALSE;
+  MsgSel_IgnoreRemaining := FALSE;
+
+  StartMsg := MsgNum;
+  CurIdx := 1;
+  InStr := '';
+  JumpMode := FALSE;
+  S := '';
+  DrawScreen;
+  ClearPrompt;
+  REPEAT
+    { Keep cursor in the right place for remote echo }
+    ANSIG(17 + Length(InStr), 22);
+    W := GetKey;
+    { Message # prompt mode: ONLY allow 0-9, ENTER, BACKSPACE. ESC/Q cancels entry. }
+    IF JumpMode THEN
+    BEGIN
+      IF (W = 27) OR ((W < 256) AND (UpCase(Chr(W)) = 'Q')) THEN
+      BEGIN
+        JumpMode := FALSE;
+        InStr := '';
+        ClearPrompt;
+        Continue;
+      END;
+      IF (W = 13) THEN
+      BEGIN
+        IF (InStr <> '') THEN
+        BEGIN
+          MsgNum := StrToInt(InStr);
+          IF (MsgNum < 1) THEN MsgNum := 1;
+          IF (MsgNum > HiMsg) THEN MsgNum := HiMsg;
+          StartMsg := MsgNum;
+          CurIdx := 1;
+        END;
+        InStr := '';
+        JumpMode := FALSE;
+        ClearPrompt;
+        DrawScreen;
+        Continue;
+      END;
+      IF (W = 8) THEN
+      BEGIN
+        IF (Length(InStr) > 0) THEN
+        BEGIN
+          Delete(InStr,Length(InStr),1);
+          UpdatePrompt;
+        END;
+        Continue;
+      END;
+      IF (W < 256) AND (Chr(W) IN ['0'..'9']) THEN
+      BEGIN
+        IF (Length(InStr) < 5) THEN
+        BEGIN
+          InStr := InStr + Chr(W);
+          UpdatePrompt;
+        END;
+        Continue;
+      END;
+      Continue;
+    END;
+
+    { Q quits like ESC }
+    { I ignores / aborts this list }
+    IF (W < 256) THEN
+    BEGIN
+      IF (UpCase(Chr(W)) = 'I') THEN
+      BEGIN
+        IF JumpMode THEN
+        BEGIN
+          JumpMode := FALSE;
+          InStr := '';
+          ClearPrompt;
+          Continue;
+        END;
+        MsgSel_IgnoreRemaining := TRUE;
+        Prompt(Chr(19)+Chr(7));
+{ stripped for remote ANSI safety }
+        { TextBackground removed for remote ANSI safety }
+        { TextColor removed for remote ANSI safety }
+        Exit;
+      END;
+    END;
+
+
+    IF (W < 256) THEN
+    BEGIN
+      IF (UpCase(Chr(W)) = 'Q') THEN
+      BEGIN
+        { Q quits like ESC }
+        MsgSel_EscPressed := TRUE;
+        Prompt(Chr(19)+Chr(7));
+{ stripped for remote ANSI safety }
+        { TextBackground removed for remote ANSI safety }
+        { TextColor removed for remote ANSI safety }
+        Exit;
+      END;
+    END;
+
+    { ESC }
+    IF (W = 27) THEN
+    BEGIN
+      IF JumpMode THEN
+      BEGIN
+        JumpMode := FALSE;
+        InStr := '';
+        ClearPrompt;
+        Continue;
+      END;
+
+      MsgSel_EscPressed := TRUE;
+
+      Prompt(Chr(19)+Chr(7));
+{ stripped for remote ANSI safety }
+      { TextBackground removed for remote ANSI safety }
+      { TextColor removed for remote ANSI safety }
+      Exit;
+    END;
+
+        { ENTER }
+    IF (W = 13) THEN
+    BEGIN
+      IF JumpMode THEN
+      BEGIN
+        IF (InStr <> '') THEN
+        BEGIN
+          MsgNum := StrToInt(InStr);
+          IF (MsgNum < 1) THEN MsgNum := 1;
+          IF (MsgNum > HiMsg) THEN MsgNum := HiMsg;
+          StartMsg := MsgNum;
+          CurIdx := 1;
+        END;
+        InStr := '';
+        JumpMode := FALSE;
+        ClearPrompt;
+        DrawScreen;
+        Continue;
+      END
+      ELSE
+      BEGIN
+        MsgNum := MsgList[CurIdx];
+        Prompt(Chr(19)+Chr(7));
+{ stripped for remote ANSI safety }
+        { TextBackground removed for remote ANSI safety }
+        { TextColor removed for remote ANSI safety }
+        Exit;
+      END;
+    END;
+
+
+    { Navigation keys }
+    IF (W = F_Up) THEN
+    BEGIN
+      { Move within current page }
+      IF (CurIdx > 1) THEN
+      BEGIN
+        DrawLine(CurIdx,FALSE);
+        Dec(CurIdx);
+        DrawLine(CurIdx,TRUE);
+      END
+      ELSE
+      { Page up when we hit the top }
+      IF (StartMsg > 1) THEN
+      BEGIN
+        IF (StartMsg > PerPage) THEN
+          Dec(StartMsg,PerPage)
+        ELSE
+          StartMsg := 1;
+
+        CurIdx := PerPage;
+        DrawScreen;
+
+        IF (CurIdx > Count) THEN
+          CurIdx := Count;
+
+        DrawLine(CurIdx,TRUE);
+      END;
+    END;
+
+IF (W = F_Down) THEN
+    BEGIN
+      { Move within current page }
+      IF (CurIdx < Count) THEN
+      BEGIN
+        DrawLine(CurIdx,FALSE);
+        Inc(CurIdx);
+        DrawLine(CurIdx,TRUE);
+      END
+      ELSE
+      { Page down when we hit the bottom }
+      IF ((StartMsg + Count - 1) < HiMsg) THEN
+      BEGIN
+        Inc(StartMsg,PerPage);
+        IF (StartMsg > (HiMsg - PerPage + 1)) THEN
+          StartMsg := HiMsg - PerPage + 1;
+
+        CurIdx := 1;
+        DrawScreen;
+      END;
+    END;
+
+IF (W = F_Home) THEN
+    BEGIN
+      StartMsg := 1;
+      CurIdx := 1;
+      DrawScreen;
+      Continue;
+    END;
+
+    IF (W = F_End) THEN
+    BEGIN
+      IF (HiMsg > PerPage) THEN
+        StartMsg := HiMsg - (PerPage - 1)
+      ELSE
+        StartMsg := 1;
+      CurIdx := 1;
+      DrawScreen;
+      IF (Count > 1) THEN
+        DrawLine(CurIdx,FALSE);
+      CurIdx := Count;
+      DrawLine(CurIdx,TRUE);
+      Continue;
+    END;
+
+    { Typed input: ONLY when JumpMode is active (press J to start) }
+IF (W < 256) THEN
+BEGIN
+  C := Chr(W);
+
+  IF (UpCase(C) = 'J') THEN
+  BEGIN
+    JumpMode := TRUE;
+    InStr := '';
+    UpdatePrompt;
+    Continue;
+  END;
+
+  IF (NOT JumpMode) AND (C IN ['0'..'9']) THEN
+  BEGIN
+    JumpMode := TRUE;
+    InStr := C;
+    UpdatePrompt;
+    Continue;
+  END;
+
+  IF JumpMode AND (C IN ['0'..'9']) THEN
+  BEGIN
+    IF (Length(InStr) < 5) THEN
+    BEGIN
+      InStr := InStr + C;
+      UpdatePrompt;
+    END;
+    Continue;
+  END;
+
+  IF JumpMode AND (W = 8) THEN
+  BEGIN
+    IF (Length(InStr) > 0) THEN
+    BEGIN
+      Delete(InStr,Length(InStr),1);
+      UpdatePrompt;
+    END
+    ELSE
+    BEGIN
+      { backspace on empty cancels }
+      JumpMode := FALSE;
+      ClearPrompt;
+    END;
+    Continue;
+  END;
+END;
+
+UNTIL (HangUp);
+END;
 
 PROCEDURE Post(ReplyTo: LongInt; VAR TToI: FromToInfo; PvtMsg: Boolean);
 VAR
@@ -156,9 +728,19 @@ BEGIN
   Next := FALSE;
   {
   CLS;
-  PrintACR('????????????????????????????????????????????????????????????????????????????ии');
-  PrintACR('? Msg# ? Sender            ? Receiver           ?  '+'Subject           ?! Posted ?');
-  PrintACR('??????????????????????????????????????????????????????????????????????????????');
+  PrintACR('
+????????????????????????????????????????????????????????????????????????????');
+  PrintACR('
+?
+ Msg# 
+?
+ Sender            
+? Receiver           
+?  '+'Subject           
+?! Posted 
+?');
+  PrintACR('
+??????????????????????????????????????????????????????????????????????????????');
   }
   lRGLngStr(238,FALSE); { Public messages list header }
   Dec(Msg_On);
@@ -217,6 +799,683 @@ BEGIN
     END;
     Wkey;
   END;
+END;
+
+PROCEDURE RL_ListLightBarSelect(VAR MsgNum: Word; Pub: Boolean);
+VAR
+  MHeader: MHeaderRec;
+  ADate: DateTime;
+  PerPage: Byte;
+  StartMsg: Word;
+  CurIdx: Byte;
+  Count: Byte;
+  MsgList: ARRAY[1..25] OF Word;
+  LineY: ARRAY[1..25] OF Byte;
+  BaseY: Byte;
+  W: Word;
+  C: Char;
+  S, S1: AStr;
+
+  PROCEDURE BuildColorLine(MN: Word; VAR OutS: AStr);
+  VAR
+    FromS, ToS, SubjS: AStr;
+
+  PROCEDURE PurgeKbd;
+  BEGIN
+    WHILE KeyPressed DO
+      ReadKey;
+  END;
+
+  BEGIN
+    LoadHeader(MN,MHeader);
+
+    { Status marker (colored, exactly like ListMessages) }
+    IF (MDeleted IN MHeader.Status) THEN
+      OutS := Chr(19)+''''+'D'
+    ELSE IF (UnValidated IN MHeader.Status) THEN
+      OutS := Chr(19)+''''+'U'
+    ELSE IF ToYou(MHeader) OR FromYou(MHeader) THEN
+      OutS := Chr(19)+''''+'>'
+    ELSE IF (Pub) AND (TempLastRead < MHeader.Date) THEN
+      OutS := Chr(19)+''''+'*'
+    ELSE
+      OutS := ' ';
+
+    { NOTE: no extra "  " gap after status marker (shifts 2 cols left) }
+    OutS := OutS + ' ' + Chr(19)+'"'+PadLeftInt(MN,5)+' ' +Chr(19)+'#';
+
+    IF (MARealName IN MemMsgArea.MAFlags) THEN
+      FromS := UseName(MHeader.From.Anon,MHeader.From.Real)
+    ELSE
+      FromS := UseName(MHeader.From.Anon,MHeader.From.A1S);
+
+    OutS := OutS + PadLeftStr(FromS,18)+'  '+Chr(19)+'$';
+
+    IF ((MARealName IN MemMsgArea.MAFlags) AND (MHeader.MTo.Real <> '')) THEN
+      ToS := UseName(MHeader.MTo.Anon,MHeader.MTo.Real)
+    ELSE
+      ToS := UseName(MHeader.MTo.Anon,MHeader.MTo.A1S);
+
+    OutS := OutS + PadLeftStr(ToS,19)+' '+Chr(19)+'% ';
+
+    IF (MHeader.FileAttached = 0) THEN
+      SubjS := MHeader.Subject
+    ELSE
+      SubjS := StripName(MHeader.Subject);
+
+    OutS := OutS + PadLeftStr(SubjS,18);
+
+    PackToDate(ADate,MHeader.Date);
+    OutS := OutS + '  '+Chr(19)+'&'+ZeroPad(IntToStr(ADate.Month))+'/'+
+                   ZeroPad(IntToStr(ADate.Day))+'/'+ZeroPad(IntToStr(ADate.Year));
+  END;
+
+  PROCEDURE BuildPlainLine(MN: Word; VAR OutS: AStr);
+  VAR
+    StatusCh: Char;
+    FromS, ToS, SubjS: AStr;
+  BEGIN
+    LoadHeader(MN,MHeader);
+
+    IF (MDeleted IN MHeader.Status) THEN
+      StatusCh := 'D'
+    ELSE IF (UnValidated IN MHeader.Status) THEN
+      StatusCh := 'U'
+    ELSE IF ToYou(MHeader) OR FromYou(MHeader) THEN
+      StatusCh := '>'
+    ELSE IF (Pub) AND (TempLastRead < MHeader.Date) THEN
+      StatusCh := '*'
+    ELSE
+      StatusCh := ' ';
+
+    IF (MARealName IN MemMsgArea.MAFlags) THEN
+      FromS := UseName(MHeader.From.Anon,MHeader.From.Real)
+    ELSE
+      FromS := UseName(MHeader.From.Anon,MHeader.From.A1S);
+
+    IF ((MARealName IN MemMsgArea.MAFlags) AND (MHeader.MTo.Real <> '')) THEN
+      ToS := UseName(MHeader.MTo.Anon,MHeader.MTo.Real)
+    ELSE
+      ToS := UseName(MHeader.MTo.Anon,MHeader.MTo.A1S);
+
+    IF (MHeader.FileAttached = 0) THEN
+      SubjS := MHeader.Subject
+    ELSE
+      SubjS := StripName(MHeader.Subject);
+
+    PackToDate(ADate,MHeader.Date);
+
+    { same column widths as ListMessages, but no color codes and no 2-space gap }
+    OutS := StatusCh+' '+PadLeftInt(MN,5)+' '+
+            PadLeftStr(FromS,18)+'  '+
+            PadLeftStr(ToS,19)+'  '+
+            PadLeftStr(SubjS,18)+'  '+
+            ZeroPad(IntToStr(ADate.Month))+'/'+ZeroPad(IntToStr(ADate.Day))+'/'+ZeroPad(IntToStr(ADate.Year));
+  END;
+
+  PROCEDURE PadRight(VAR SS: AStr; N: Byte);
+  BEGIN
+    WHILE (Length(SS) < N) DO
+      SS := SS + ' ';
+    IF (Length(SS) > N) THEN
+      SS := Copy(SS,1,N);
+  END;
+
+
+
+
+  PROCEDURE DrawRow(I2: Byte; Hilite: Boolean); FORWARD;
+  PROCEDURE DrawScreen;
+  VAR
+    FooterY1, FooterY2: Byte;
+    ListBottom: Byte;
+    I2: Byte;
+    MN: Word;
+
+  BEGIN
+    CLS;
+    { Reserve 2 footer lines at bottom (prevents lightbar overlap) }
+    FooterY2 := Hi(WindMax);
+    FooterY1 := FooterY2 - 1;
+    ListBottom := FooterY1 - 2;
+
+    lRGLngStr(238,FALSE);
+
+    PerPage := PageLength - 8;
+    IF (PerPage < 5) THEN PerPage := 5;
+    IF (PerPage > 20) THEN PerPage := 20;
+
+    { Start list directly under the header }
+    BaseY := WhereY + 1;
+
+    { Clamp list height so it does not draw into footer }
+    IF (BaseY <= ListBottom) THEN
+    BEGIN
+      IF (BaseY + PerPage - 1 > ListBottom) THEN
+        PerPage := (ListBottom - BaseY + 1);
+    END
+    ELSE
+      PerPage := 0;
+
+    Count := 0;
+    FOR I2 := 1 TO PerPage DO
+    BEGIN
+      MN := StartMsg + (I2 - 1);
+      IF (MN <= HiMsg) THEN
+      BEGIN
+        Inc(Count);
+        MsgList[Count] := MN;
+        LineY[Count] := BaseY + (Count - 1);
+      END;
+    END;
+
+    { clamp selection }
+    IF Count < 1 THEN
+      CurIdx := 1
+    ELSE
+    BEGIN
+      IF CurIdx < 1 THEN
+        CurIdx := 1;
+      IF CurIdx > Count THEN
+        CurIdx := Count;
+    END;
+
+    FOR I2 := 1 TO Count DO
+      DrawRow(I2, (I2 = CurIdx));
+
+        { Footer help lines (2-line footer) }
+    Prompt(#27'[0m');
+    Prompt(#27'[37;40m');
+    Prompt(#27'[0K');
+
+    ANSIG(1, Hi(WindMax)-1);
+    lRGLngStr(288,FALSE);
+{    Prompt('ENTER=Read  I=Ignore  Q/ESC=Quit');}
+    Prompt(#27'[0K');
+
+    ANSIG(1, FooterY2);
+    lRGLngStr(289,FALSE);
+{    Prompt('Up/Down=Move  PgUp/PgDn=Page  Home/End=Jump');}
+    Prompt(#27'[0K');
+{ Restore Renegade normal colors for anything after this }
+{ stripped for remote ANSI safety }
+    Prompt(Chr(19)+Chr(7));
+  END;
+
+
+  
+  FUNCTION VisLen(S: AStr): Byte;
+    VAR
+      I: Integer;
+      C: Byte;
+  BEGIN
+    C := 0;
+    I := 1;
+    WHILE I <= Length(S) DO
+    BEGIN
+      IF (S[I] = Chr(19)) AND (I < Length(S)) THEN
+        Inc(I, 2)
+      ELSE
+      BEGIN
+        Inc(C);
+        Inc(I);
+      END;
+    END;
+    VisLen := C;
+  END;
+
+  FUNCTION CutVis(S: AStr; W: Byte): AStr;
+    VAR
+      I: Integer;
+      C: Byte;
+      T: AStr;
+  BEGIN
+    T := '';
+    C := 0;
+    I := 1;
+    WHILE (I <= Length(S)) AND (C < W) DO
+    BEGIN
+      IF (S[I] = Chr(19)) AND (I < Length(S)) THEN
+      BEGIN
+        { keep Renegade color codes as-is (2 bytes) }
+        T := T + S[I] + S[I+1];
+        Inc(I, 2);
+      END
+      ELSE
+      BEGIN
+        T := T + S[I];
+        Inc(C);
+        Inc(I);
+      END;
+    END;
+    CutVis := T;
+  END;
+
+  FUNCTION SkipVis(S: AStr; N: Byte): AStr;
+    VAR
+      I: Integer;
+      V: Byte;
+      OutS: AStr;
+  BEGIN
+    I := 1;
+    V := 0;
+    OutS := '';
+
+    { Skip N visible characters, preserving any Renegade color codes encountered }
+    WHILE (I <= Length(S)) AND (V < N) DO
+    BEGIN
+      IF (S[I] = Chr(19)) AND (I < Length(S)) THEN
+      BEGIN
+        OutS := OutS + S[I] + S[I+1];
+        Inc(I, 2);
+      END
+      ELSE
+      BEGIN
+        Inc(V);
+        Inc(I);
+      END;
+    END;
+
+    IF I <= Length(S) THEN
+      OutS := OutS + Copy(S, I, Length(S) - I + 1);
+
+    SkipVis := OutS;
+  END;
+  PROCEDURE PadVis(VAR S: AStr; W: Byte);
+    VAR
+      V: Byte;
+  BEGIN
+    V := VisLen(S);
+    WHILE V < W DO
+    BEGIN
+      S := S + ' ';
+      Inc(V);
+    END;
+  END;
+
+PROCEDURE DrawRow(I2: Byte; Hilite: Boolean);
+  VAR
+    L: AStr;
+    P: AStr;
+    P2: AStr;
+    LRest: AStr;
+  BEGIN
+    { Fixed visible width: 79 columns in the message list area.
+      We avoid painting the highlight over columns 1-2 (the status flag area)
+      to reduce ANSI client "smear" issues. }
+
+    IF (I2 < 1) OR (I2 > Count) THEN
+      Exit;
+
+    { Hard-clear the entire line to black before repainting }
+    ANSIG(1, LineY[I2]);
+    Prompt(#27'[0m');
+    Prompt(#27'[37;40m');
+    Prompt(#27'[0K');
+{ stripped ClrEol for remote safety }
+
+    IF Hilite THEN
+    BEGIN
+    Prompt(#27'[0m');
+    Prompt(#27'[1;37;44m'); { bright white on blue }
+      BuildPlainLine(MsgList[I2], P);
+      P := CutVis(P, 79);
+      PadVis(P, 79);
+
+      { Cols 1-2 normal (status), cols 3-79 highlighted }
+      ANSIG(1, LineY[I2]);
+{ stripped for remote ANSI safety }
+      { TextBackground removed for remote ANSI safety }
+      { TextColor removed for remote ANSI safety }
+      P2 := Copy(P, 1, 2);
+      IF Length(P2) < 2 THEN P2 := P2 + '  ';
+      Prompt(P2);
+
+      ANSIG(3, LineY[I2]);
+{ stripped for remote ANSI safety }
+      { TextBackground removed for remote ANSI safety }
+      { TextColor removed for remote ANSI safety }
+      P2 := Copy(P, 3, 77);
+      IF Length(P2) < 77 THEN
+        P2 := P2 + Copy('                                                                             ', 1, 77 - Length(P2));
+      Prompt(P2);
+    END
+    ELSE
+    BEGIN
+      { Normal line: keep color codes, but start painting at col 3 }
+      BuildPlainLine(MsgList[I2], P);
+      BuildColorLine(MsgList[I2], L);
+      P := CutVis(P, 79);
+      PadVis(P, 79);
+
+      ANSIG(1, LineY[I2]);
+{ stripped for remote ANSI safety }
+      { TextBackground removed for remote ANSI safety }
+      { TextColor removed for remote ANSI safety }
+      Prompt(Copy(P, 1, 2));
+
+      ANSIG(3, LineY[I2]);
+      LRest := SkipVis(L, 2);
+      LRest := CutVis(LRest, 77);
+      PadVis(LRest, 77);
+      Prompt(LRest);
+    END;
+
+    { Ensure the remainder of the line is black }
+    Prompt(#27'[0m');
+    Prompt(#27'[37;40m');
+    Prompt(#27'[K');
+{ stripped for remote ANSI safety }
+      { TextBackground removed for remote ANSI safety }
+      { TextColor removed for remote ANSI safety }
+  END;
+BEGIN
+  { initialize TempLastRead so '*' flags are correct on first entry }
+  LoadLastReadRecord(LastReadRecord);
+  TempLastRead := LastReadRecord.LastRead;
+
+
+  { reset selector state each entry }
+  RL_EscPressed := FALSE;
+  RL_IgnoreRemaining := FALSE;
+  JumpMode := FALSE;
+  S := '';
+  { reduce remote flicker } 
+  IF (ComPortSpeed > 0) THEN
+    Prompt(#27'[?25l');
+
+  IF (HiMsg < 1) THEN
+  BEGIN
+    NL;
+    Print('No messages to list.');
+    IF (ComPortSpeed > 0) THEN
+    Prompt(#27'[?25h');
+    Exit;
+  END;
+
+  IF (MsgNum < 1) THEN MsgNum := 1;
+  IF (MsgNum > HiMsg) THEN MsgNum := HiMsg;
+
+  StartMsg := MsgNum;
+  CurIdx := 1;
+
+  DrawScreen;
+
+  REPEAT
+    W := GetKey;
+
+    { Message # prompt mode: ONLY allow 0-9, ENTER, BACKSPACE. ESC/Q cancels entry. }
+    IF JumpMode THEN
+    BEGIN
+      IF (W = 27) OR ((W < 256) AND (UpCase(Chr(W)) = 'Q')) THEN
+      BEGIN
+        JumpMode := FALSE;
+        S := '';
+        ANSIG(1, Hi(WindMax)-1);
+        Prompt(#27'[0K');
+        lRGLngStr(288, FALSE);
+        Continue;
+      END;
+
+      IF (W = 13) THEN
+      BEGIN
+        IF (Length(S) > 0) THEN
+        BEGIN
+          MsgNum := StrToInt(S);
+          IF (MsgNum < 1) THEN MsgNum := 1;
+          IF (MsgNum > HiMsg) THEN MsgNum := HiMsg;
+          StartMsg := MsgNum;
+          CurIdx := 1;
+          DrawScreen;
+        END;
+        JumpMode := FALSE;
+        S := '';
+        ANSIG(1, Hi(WindMax)-1);
+        Prompt(#27'[0K');
+        lRGLngStr(288, FALSE);
+        Continue;
+      END;
+
+      IF (W = 8) THEN
+      BEGIN
+        IF (Length(S) > 0) THEN
+          Delete(S, Length(S), 1);
+        ANSIG(1, Hi(WindMax)-1);
+        Prompt(#27'[0m'); Prompt(#27'[1;34;40m'); Prompt(#27'[0K');
+        Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
+        Prompt(S);
+        Continue;
+      END;
+
+      IF (W < 256) AND (Chr(W) IN ['0'..'9']) THEN
+      BEGIN
+        IF (Length(S) < 5) THEN
+          S := S + Chr(W);
+        ANSIG(1, Hi(WindMax)-1);
+        Prompt(#27'[0m'); Prompt(#27'[1;34;40m'); Prompt(#27'[0K');
+        Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
+        Prompt(S);
+        Continue;
+      END;
+
+      { ignore everything else in JumpMode }
+      Continue;
+    END;
+
+    { Normal navigation: allow [ and ] as PageUp/PageDn (but NOT while entering Msg#) }
+    IF (W < 256) THEN
+    BEGIN
+      IF (UpCase(Chr(W)) = '[') OR (UpCase(Chr(W)) = 'P') THEN
+      BEGIN
+        { PageUp }
+        IF (StartMsg > 1) THEN
+        BEGIN
+          IF (StartMsg > PerPage) THEN
+            Dec(StartMsg, PerPage)
+          ELSE
+            StartMsg := 1;
+          CurIdx := 1;
+          DrawScreen;
+        END;
+        Continue;
+      END
+      ELSE IF (UpCase(Chr(W)) = ']') OR (UpCase(Chr(W)) = 'L') THEN
+      BEGIN
+        { PageDn }
+        IF (StartMsg + PerPage <= HiMsg) THEN
+        BEGIN
+          Inc(StartMsg, PerPage);
+          IF (StartMsg + PerPage - 1 > HiMsg) THEN
+            StartMsg := HiMsg - PerPage + 1;
+          IF (StartMsg < 1) THEN
+            StartMsg := 1;
+          CurIdx := 1;
+          DrawScreen;
+        END;
+        Continue;
+      END;
+    END;
+
+{ Q = Quit like ESC, I = Ignore Remaining (same as R+I in ReadP) }
+    IF (W < 256) THEN
+    BEGIN
+      C := UpCase(Chr(W));
+      { Numeric jump is ONLY via 'J' mode to avoid garbage from stray digits }
+      IF (NOT JumpMode) AND (C = 'J') THEN
+      BEGIN
+        JumpMode := TRUE;
+        S := '';
+        ANSIG(1, Hi(WindMax)-1);
+        Prompt(#27'[0m');
+         Prompt(#27'[1;34;40m');
+         Prompt(#27'[0K');
+         Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
+        Continue;
+      END;
+
+      { Digit starts numeric entry }
+      IF (NOT JumpMode) AND (C IN ['0'..'9']) THEN
+      BEGIN
+        JumpMode := TRUE;
+        S := C;
+        ANSIG(1, Hi(WindMax)-1);
+        Prompt(#27'[0m');
+         Prompt(#27'[1;34;40m');
+         Prompt(#27'[0K');
+         Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
+        Prompt(S);
+        Continue;
+      END;
+
+      IF (JumpMode) THEN
+      BEGIN
+        { Cancel jump mode }
+        IF (W = 27) THEN
+        BEGIN
+          JumpMode := FALSE;
+          ANSIG(1, Hi(WindMax)-1);
+          Prompt('');
+          lRGLngStr(288, FALSE);
+          Continue;
+        END;
+
+        { Backspace }
+        IF (W = 8) THEN
+        BEGIN
+          IF (Length(S) > 0) THEN
+            Delete(S, Length(S), 1)
+          ELSE
+          BEGIN
+            JumpMode := FALSE;
+            ANSIG(1, Hi(WindMax)-1);
+            Prompt('');
+            lRGLngStr(288, FALSE);
+            Continue;
+          END;
+
+          ANSIG(1, Hi(WindMax)-1);
+          Prompt(#27'[0m');
+         Prompt(#27'[1;34;40m');
+         Prompt(#27'[0K');
+         Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
+          Prompt(S);
+          Continue;
+        END;
+
+        { Digits }
+        IF (C IN ['0'..'9']) THEN
+        BEGIN
+          S := S + C;
+          ANSIG(1, Hi(WindMax)-1);
+          Prompt(#27'[0m');
+         Prompt(#27'[1;34;40m');
+         Prompt(#27'[0K');
+         Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
+          Prompt(S);
+          Continue;
+        END;
+
+        { ENTER confirms jump }
+        IF (W = 13) THEN
+        BEGIN
+          IF (Length(S) > 0) THEN
+          BEGIN
+            MsgNum := StrToInt(S);
+            IF (MsgNum < 1) THEN MsgNum := 1;
+            IF (MsgNum > HiMsg) THEN MsgNum := HiMsg;
+
+            StartMsg := MsgNum;
+            CurIdx := 1;
+            DrawScreen;
+          END;
+
+          JumpMode := FALSE;
+          S := '';
+          ANSIG(1, Hi(WindMax)-1);
+          Prompt('');
+          lRGLngStr(288, FALSE);
+          Continue;
+        END;
+      END;
+
+      IF (C = 'Q') THEN
+      BEGIN
+        RL_EscPressed := TRUE;
+        Break;
+      END;
+      IF (C = 'I') THEN
+      BEGIN
+        RL_IgnoreRemaining := TRUE;
+        Break;
+      END;
+    END;
+
+    IF (W = 27) THEN
+    BEGIN
+      RL_EscPressed := TRUE;
+      Break;
+    END;
+
+    IF (W = 13) THEN
+    BEGIN
+      MsgNum := MsgList[CurIdx];
+        { eat any key repeats so ReadMsg does not auto-advance }
+      IF (ComPortSpeed > 0) THEN
+    Prompt(#27'[?25h');
+      Exit;
+    END;
+
+    IF (W = F_Up) THEN
+    BEGIN
+      IF (CurIdx > 1) THEN
+      BEGIN
+        W := CurIdx;
+        Dec(CurIdx);
+        DrawRow(W, FALSE);
+        DrawRow(CurIdx, TRUE);
+      END
+      ELSE IF (StartMsg > 1) THEN
+      BEGIN
+        { Page up: jump a full page and put bar on LAST line so it feels
+          like continuous scrolling }
+        IF (StartMsg > PerPage) THEN
+          Dec(StartMsg, PerPage)
+        ELSE
+          StartMsg := 1;
+        CurIdx := PerPage;
+        DrawScreen;
+      END;
+      Continue;
+    END;
+
+    IF (W = F_Down) THEN
+    BEGIN
+      IF (CurIdx < Count) THEN
+      BEGIN
+        W := CurIdx;
+        Inc(CurIdx);
+        DrawRow(W, FALSE);
+        DrawRow(CurIdx, TRUE);
+      END
+      ELSE IF (StartMsg + PerPage <= HiMsg) THEN
+      BEGIN
+        { Page down like area listing: jump a full page and keep bar at top }
+        Inc(StartMsg, PerPage);
+        IF (StartMsg + PerPage - 1 > HiMsg) THEN
+          StartMsg := HiMsg - PerPage + 1;
+        IF (StartMsg < 1) THEN
+          StartMsg := 1;
+        CurIdx := 1;
+        DrawScreen;
+      END;
+      Continue;
+    END;
+{ numeric jump handled above (J-only); stray digits ignored }
+  UNTIL FALSE;
+
+  { ensure cursor is visible on exit }
+  IF (ComPortSpeed > 0) THEN
+    Prompt(#27'[?25h');
 END;
 
 PROCEDURE MainRead(OncOnly,AskUpdate,Pub: Boolean);
@@ -324,7 +1583,17 @@ BEGIN
           Cls
         ELSE
           NL;
-        ReadMsg(Msg_On,Msg_On,HiMsg);
+                { Fix: reset COMMON pager/output state so Continue prompt works after lightbar selection }
+
+                DOSANSIOn := FALSE;
+
+                CtrlJOff := FALSE;
+
+                CROff := FALSE;
+
+                LIL := 0;
+
+                ReadMsg(Msg_On,Msg_On,HiMsg);
         IF (Pub) AND (TempLastRead < MHeader.Date) AND (MHeader.Date <= GetPackDateTime) THEN
           TempLastRead := MHeader.Date;
         IF (Pub) THEN
@@ -853,24 +2122,69 @@ BEGIN
                   TempLastRead := MHeader.Date;
               END;
          13 : BEGIN
-                IF (Pub) AND (AskUpdate) THEN
-                BEGIN
-                  NL;
-                  IF PYNQ('Update message read pointers for this area? ',0,FALSE) THEN
+                { Lightbar message selector / jump-to-message }
+                IF (HiMsg = 0) THEN
                   BEGIN
-                    LoadLastReadRecord(LastReadRecord);
-                    LastReadRecord.LastRead := GetPackDateTime;
-                    SaveLastReadRecord(LastReadRecord);
+                    NL;
+                    Print('No messages to select.');
+                  END
+                ELSE
+                  BEGIN
+                    MsgSel_EscPressed := FALSE;
+                    MsgSel_IgnoreRemaining := FALSE;
+                    SelectMsgLightBar(Msg_On,HiMsg,Pub);
+                    IF MsgSel_IgnoreRemaining THEN
+                    BEGIN
+                      { Ignore remaining exits to message menu }
+                      TReadPrompt := 7;
+                      DoneScan := TRUE;
+                      Abort := TRUE;
+                    END
+                    ELSE IF MsgSel_EscPressed THEN
+                    BEGIN
+                      { ESC/Q cancels selector and exits cleanly }
+                      TReadPrompt := 7;
+                      DoneScan := TRUE;
+                      Abort := TRUE;
+                    END
+                    ELSE
+                      { Force re-read at the newly selected message }
+                      TReadPrompt := 1;
                   END;
-                END;
-                DoneScan := TRUE;
-                Next := TRUE;
               END;
          14 : BEGIN
                 DoneScan := TRUE;
                 Abort := TRUE;
               END;
-         15 : ListMessages(Pub);
+         15 : BEGIN
+                { R+L : List Messages (lightbar-select when enabled) }
+                IF (NOT OkANSI) OR (NOT General.UseLightBars) OR
+                   (NOT (LightBars IN ThisUser.SFlags)) THEN
+                  ListMessages(Pub)
+                ELSE
+                BEGIN
+                  RL_IgnoreRemaining := FALSE;
+                   RL_EscPressed := FALSE;
+                   RL_ListLightBarSelect(Msg_On,Pub);
+                   IF (RL_EscPressed) THEN
+                   BEGIN
+                     { ESC/Q exits to msg menu }
+                     TReadPrompt := 7;
+                     DoneScan := TRUE;
+                     Abort := TRUE;
+                   END
+                   ELSE IF (RL_IgnoreRemaining) THEN
+                   BEGIN
+                     { Ignore Remaining: mark hi-read and continue new scan }
+                     LoadHeader(HiMsg, MHeader);
+                     TempLastRead := MHeader.Date;
+                     DoneScan := TRUE;
+                     Abort := FALSE;
+                   END
+                   ELSE
+                     TReadPrompt := 1;
+                END;
+              END;
          16 : IF (NOT CoSysOp) THEN
                 Print('^8You do not have the required access level for this option!^0')
               ELSE IF (LastAuthor < 1) OR (LastAuthor > (MaxUsers - 1)) THEN
@@ -979,46 +2293,59 @@ BEGIN
         PauseScr(FALSE);
     END
   ELSE
-    BEGIN
-      Msg_On := 1;
-      Inputstr := '?';
-      REPEAT
-        IF (InputStr = '?') THEN
-          ListMessages(MsgArea <> -1);
-        NL;
-        lRGLngStr(32,FALSE);
-        ScanInput(InputStr,'Q?'^M);
-        IF (InputStr = 'Q') THEN
-          Msg_On := 0
-        ELSE
-          BEGIN
-            IF (InputStr = ^M) THEN
-              BEGIN
-                InputStr := '?';
-                IF (Msg_On >= HiMsg) THEN
-                  Msg_On := 1;
-              END
-            ELSE IF (InputStr = '?') THEN
-              BEGIN
-                Msg_On := 1;
-                InputStr := '?';
-              END
-            ELSE
-              BEGIN
-                Msg_On := StrToInt(InputStr);
-                IF (Msg_On >= 1) AND (Msg_On <= HIMsg) THEN
-                  InputStr := 'Q'
-                ELSE
-                  BEGIN
-                    NL;
-                    Print('^8The range must be from 1 to '+IntToStr(HiMsg)+'^0');
-                    PauseScr(FALSE);
+    BEGIN      Msg_On := 1;
+
+      { When lightbars are enabled, use the same selector as R+L }
+      IF (OkANSI) AND (General.UseLightBars) AND (LightBars IN ThisUser.SFlags) THEN
+      BEGIN
+        RL_ListLightBarSelect(Msg_On,(MsgArea <> -1));
+         { ESC/Q or Ignore Remaining should exit M+R cleanly }
+         IF (RL_EscPressed) OR (RL_IgnoreRemaining) THEN
+         BEGIN
+           Msg_On := 0;
+         END;
+      END
+      ELSE
+      BEGIN
+        InputStr := '?';
+        REPEAT
+          IF (InputStr = '?') THEN
+            ListMessages(MsgArea <> -1);
+          NL;
+          lRGLngStr(32,FALSE);
+          ScanInput(InputStr,'Q?'^M);
+          IF (InputStr = 'Q') THEN
+            Msg_On := 0
+          ELSE
+            BEGIN
+              IF (InputStr = ^M) THEN
+                BEGIN
+                  InputStr := '?';
+                  IF (Msg_On >= HiMsg) THEN
                     Msg_On := 1;
-                    InputStr := '?';
-                  END;
-              END;
-          END;
-      UNTIL (InputStr = 'Q') OR (HangUp);
+                END
+              ELSE IF (InputStr = '?') THEN
+                BEGIN
+                  Msg_On := 1;
+                  InputStr := '?';
+                END
+              ELSE
+                BEGIN
+                  Msg_On := StrToInt(InputStr);
+                  IF (Msg_On >= 1) AND (Msg_On <= HiMsg) THEN
+                    InputStr := 'Q'
+                  ELSE
+                    BEGIN
+                      NL;
+                      Print('^8The range must be from 1 to '+IntToStr(HiMsg)+'^0');
+                      PauseScr(FALSE);
+                      Msg_On := 1;
+                      InputStr := '?';
+                    END;
+                END;
+            END;
+        UNTIL (InputStr = 'Q') OR (HangUp);
+      END;
       IF (Msg_On >= 1) AND (Msg_On <= HiMsg) AND (NOT HangUp) THEN
         BEGIN
           IF (MsgArea <> -1) THEN
@@ -1026,6 +2353,8 @@ BEGIN
               LoadLastReadRecord(LastReadRecord);
               TempLastRead := LastReadRecord.LastRead;
             END;
+          WHILE KeyPressed DO ReadKey;
+
           MainRead(FALSE,FALSE,(MsgArea <> -1));
           IF (MsgArea <> -1) THEN
             BEGIN

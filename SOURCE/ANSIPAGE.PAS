@@ -52,11 +52,12 @@ END;
 
 PROCEDURE DrawHeader(CONST Title: AStr);
 BEGIN
+  { Clean, self-contained header (visual style: simple, stable) }
   TermGotoRC(1,1); OutStr(ESC + '[0m'); { reset attrs }
   OutStr(ESC + '[2K');  { clear line }
   OutStr('|11 ' + Title);
   TermGotoRC(2,1); OutStr(ESC + '[2K');
-  OutStr(' |09Up/Down=Page  Home/End  |14ESC|09=Exit');
+  OutStr(' |09Up|08/|09Down|08=|09Page  |09Home|08/|09End  |15ESC|08=|09Exit');
   TermGotoRC(3,1); OutStr(ESC + '[2K');
   OutStr('|01컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴컴�');
           
@@ -209,6 +210,8 @@ BEGIN
 
   Close(F);
 
+  { If we saw clears, ignore any line-count pages beyond the clear breaks already stored. }
+  { PageCnt already reflects those breaks. }
 END;
 
 PROCEDURE RenderPage(CONST FN: AStr; CurPage: Integer);
@@ -345,14 +348,14 @@ BEGIN
   DrawFooter(CurPage, Total);
 
   REPEAT
-    { InKey updates, GetKey returns word }
+    { Renegade pattern: InKey updates, GetKey returns word }
     InKey;
     Key := GetKey;
 
     CASE Key OF
       27: Break; { ESC }
 
-      { GetKey returns ScanCode*256 for extended keys }
+      { Renegade GetKey returns ScanCode*256 for extended keys }
       72*256, 73*256: { Up or PgUp }
         IF CurPage > 0 THEN
         BEGIN

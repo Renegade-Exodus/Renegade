@@ -1,35 +1,3 @@
-{
-Lee Woodridge
- 09/23/2021 - Removed system config strings
-            - Removed file area editor strings
- 10/01/2021 - Added Lightbar "Yes"(96) & "No"(97) strings to LNG
- 10/02/2021 - Added "Aborted"(44) & "Saved"(45) strings to NOTE
-            - Added Auto Message strings (98-104) to LNG
- 10/12/2021 - Added Teleconf Normal(11),Anonymous(12),Global(13),Private(14) to MAIN
- 11/01/2021 - All string files combined into RGLNG.TXT
-            - #193 unused -- replace with something NOT UNTIL I FINISH MULTINODE CHAT
-            - Too many nested IF, ELSE IF statements causing internal stack overflow
-                - temp fixed by starting over after each section
- 11/12/2021 - Added updateuserinfo strings (#234/235), Force batch DL (#236), Force batch UL (#237), Add quote prompt (#179)
- 11/15/2021 - Added reading public messages list header (#238)
- 11/18/2021 - Added User not found string (#239), User search ask string (#240), quote header (#241)
- 11/25/2021 - Added timeout message (#242)
- ... top users/files in here somewhere
- 02/24/2022 - Added change conference strings (#256-259)
- 03/20/2022 - added email cant send msgs 263-270
- 00/00/0000 - 271-272 download top files
- 00/00/0000 - 273-274 voting
- 00/00/0000 - 275 max attempts
- 04/27/2022 - 276 menu command no acs
- 02/17/2023 - 282-286 - Multi-node and SysOp availability strings
- -
- [NOTES]
- - add lightbar_continuous for continue lightbar prompt
- - bug where if a string is empty, like:
-    $TEST_STRING
-    $
-    it will use the NEXT STRING below instead of printing/passing blank string
-}
 PROGRAM RGLNG;
 
 USES
@@ -695,6 +663,12 @@ BEGIN
                 RgStrNum := 286
               ELSE IF (S = 'BATCH_DL_EMPTY') THEN
                 RgStrNum := 287
+              ELSE IF (S = 'MSG_LB_FOOTER') THEN
+                RgStrNum := 288
+              ELSE IF (S = 'MSG_LB_FOOTER_2') THEN
+                RgStrNum := 289
+			  ELSE IF (S = 'MSG_LB_GOTO') THEN
+                RgStrNum := 290
                 {// END OF COMB }
                 (*
               ELSE IF (S = '') THEN

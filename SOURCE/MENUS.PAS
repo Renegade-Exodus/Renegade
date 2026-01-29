@@ -829,7 +829,7 @@ BEGIN
             'P' : PageNode;
             'G' : TeleConference;
             'S' : MessageNode(MenuOption);
-            'T' : IF AACS(General.Invisible) THEN
+			'T' : IF AACS(General.Invisible) THEN
                   BEGIN
                     IsInvisible := NOT IsInvisible;
                     LoadNode(ThisNode);

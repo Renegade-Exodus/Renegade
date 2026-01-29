@@ -1302,8 +1302,8 @@ BEGIN
   IF (IOResult <> 0) THEN
   BEGIN
     NL;
-    Print('|04Unable to open file for viewing: |15'+FN);
-        Print('|09[ |15ş Press any key ş |09]');
+    Print('^8Unable to open file for viewing:^0 '+FN);
+        Print('^7Press any key...^0');
     GetKey;
 Exit;
   END;
@@ -1616,9 +1616,10 @@ BEGIN
     IF Redraw THEN
     BEGIN
       CLS;
-      PrintACR('|15Archive Browser: |11'+StripName(ArcFN));
-      PrintACR('|09Up/Down PgUp/PgDn  |14ENTER|09=View  |15ESC|09=Exit');
+      PrintACR('^1Archive Browser: ^2'+StripName(ArcFN));
+      PrintACR('^2Up/Down PgUp/PgDn  ^1ENTER^2=View  ^1ESC^2=Exit');
       PrintACR('|01ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ');
+      { Header (absolute columns to keep alignment perfect) }
       ANSIG(1,4); Prt('|08|16'+PadRightStr('',79));
       Prt('|07|16' + PadRightStr('',79));
       ANSIG(1,4);  Prt('|09|16##');

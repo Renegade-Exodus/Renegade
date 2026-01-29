@@ -752,6 +752,15 @@ BEGIN
 
   NL;
 
+  { LOCAL ANSI scroll region fix: keep Date/Number header line from being scrolled off on multi-page messages }
+  IF (ComPortSpeed = 0) AND (DOSANSIOn) THEN
+  BEGIN
+    IF (General.WindowOn) THEN
+      Prompt(#27 + '[2;23r')
+    ELSE
+      Prompt(#27 + '[2;25r');
+  END;
+
   Reset(MsgTxtF,1);
   IF (IOResult <> 0) THEN
   BEGIN
@@ -844,6 +853,10 @@ BEGIN
     END;
   AllowAbort := TRUE;
   TempPause := (Pause IN ThisUser.ACFlags);
+  { LOCAL ANSI: restore full screen scroll region }
+  IF (ComPortSpeed = 0) AND (DOSANSIOn) THEN
+    Prompt(#27 + '[1;25r');
+
 END;
 
 (* Done:  Lee Palmer 10/23/09 *)
