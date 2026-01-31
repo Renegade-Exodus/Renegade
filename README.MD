@@ -13,3 +13,5 @@ Last release I made was in Sept. 2024, and I made a few minor changes since I re
 to make any changes.  
 
 ** If anyone wishes to contribute, please feel free to do so!  **
+
+1/30/26 - I added a complete light bar setup for the message reader.  I also added a archive lightbar viewer that can view ANSI and TEXT inside an archive.
