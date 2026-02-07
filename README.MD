@@ -14,4 +14,4 @@ to make any changes.
 
 ** If anyone wishes to contribute, please feel free to do so!  **
 
-2/06/26 - I added a complete light bar setup for the Message Reader and File listing.  I also added a archive lightbar viewer that can view ANSI and TEXT inside an archive.
+2/06/26 - I added a complete light bar setup for the Message Reader and File listing.  I also added a archive lightbar viewer that can view ANSI and TEXT inside an archive. - Exodus
