@@ -1,13 +1,11 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
-ansiok check for lightbar menu???
-}
+
 UNIT File11;
 
 INTERFACE
 
 USES
-  Common;
+  Common, Crt;
 
 TYPE
   FileRecType = RECORD
@@ -38,14 +36,64 @@ IMPLEMENTATION
 
 USES
   DOS,
-  CRT,
   ArcView,
   Common5,
   File0,
   File1,
+  File6,
+  File8,
   File10,
   Menus,
   TimeFunc;
+
+
+
+{ Returns the exact batch-key used by File6.CheckBatchDL / RemoveBatchDLByKey }
+FUNCTION BatchKeyForFI(CONST FI: FileInfoRecordType): Str52;
+BEGIN
+  IF (Common.Exist(MemFileArea.DLPath + FI.FileName)) THEN
+    BatchKeyForFI := Common.SQOutSp(MemFileArea.DLPath + FI.FileName)
+  ELSE
+    BatchKeyForFI := Common.SQOutSp(MemFileArea.ULPath + FI.FileName);
+END;
+
+PROCEDURE LoadVerbArray11(F: FileInfoRecordType; VAR ExtArray: ExtendedDescriptionArray;
+  VAR NumExtDesc: Byte);
+VAR
+  VerbStr: AStr;
+  TotLoad: Integer;
+  VFO: Boolean;
+BEGIN
+  FillChar(ExtArray,SizeOf(ExtArray),0);
+  NumExtDesc := 1;
+  VFO := (FileRec(ExtInfoFile).Mode <> FMClosed);
+  IF (NOT VFO) THEN
+    Reset(ExtInfoFile,1);
+  IF (IOResult = 0) THEN
+  BEGIN
+    TotLoad := 0;
+    Seek(ExtInfoFile,(F.VPointer - 1));
+    REPEAT
+      BlockRead(ExtInfoFile,VerbStr[0],1);
+      BlockRead(ExtInfoFile,VerbStr[1],Ord(VerbStr[0]));
+      Inc(TotLoad,(Length(VerbStr) + 1));
+      ExtArray[NumExtDesc] := VerbStr;
+      Inc(NumExtDesc);
+    UNTIL (TotLoad >= F.VTextSize);
+    IF (NOT VFO) THEN
+      Close(ExtInfoFile);
+  END;
+  Dec(NumExtDesc);
+  LastError := IOResult;
+END;
+
+
+
+{ Local wrapper - avoids missing PrintACR in mismatched TPUs }
+PROCEDURE PrintACR(CONST S: AStr);
+BEGIN
+  Print(S);
+END;
 
 TYPE
   DownLoadArrayType = ARRAY [0..99] OF Integer;
@@ -260,7 +308,7 @@ BEGIN
                         InitFileArea(FileArea);
                         Seek(FileInfoFile,FArray[DLArray[Counter]].FArrayDirFileRecNum);
                         Read(FileInfoFile,FileInfo);
-                        TransferFlags := [IsCheckRatio];
+                        TransferFlags := [IsCheckRatio,lIsAddDLBatch];
                         DLX(FileInfo,FArray[DLArray[Counter]].FArrayDirFileRecNum,TransferFlags);
                         IF (IsKeyboardAbort IN TransferFlags) THEN
                           Abort := TRUE;
@@ -348,13 +396,13 @@ BEGIN
                     Seek(FileInfoFile,FArray[DLArray[Counter]].FArrayDirFileRecNum);
                     Read(FileInfoFile,FileInfo);
                     IF (NOT ValidIntArcType(FileInfo.FileName)) THEN
-                      Print('%LF'+SQOutSp(FileInfo.FileName)+' is not a valid archive type or not supported.')
+                      Print('%LF'+Common.SQOutSp(FileInfo.FileName)+' is not a valid archive type or not supported.')
                     ELSE
                     BEGIN
-                      IF Exist(MemFileArea.DLPath+FileInfo.FileName) THEN
-                        ViewInternalArchive(MemFileArea.DLPath+SQOutSp(FileInfo.FileName))
-                      ELSE IF Exist(MemFileArea.ULPath+FileInfo.FileName) THEN
-                        ViewInternalArchive(MemFileArea.ULPath+SQOutSp(FileInfo.FileName));
+                      IF Common.Exist(MemFileArea.DLPath+FileInfo.FileName) THEN
+                        ViewInternalArchive(MemFileArea.DLPath+Common.SQOutSp(FileInfo.FileName))
+                      ELSE IF Common.Exist(MemFileArea.ULPath+FileInfo.FileName) THEN
+                        ViewInternalArchive(MemFileArea.ULPath+Common.SQOutSp(FileInfo.FileName));
                     END;
                     Close(FileInfoFile);
                     Close(ExtInfoFile);
@@ -466,25 +514,6 @@ BEGIN
   Lil := 0;
   Lines := 0;
   FileRedisplayLines := 0;
-  (*
-  CLS;
-  IF (NOT General.FileCreditRatio) THEN
-  BEGIN
-Output_File_Stuff('矬鐃闡闡闡闡闡闡薩闡闡闡闡鐃闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡
-闡闡闡闡闡闡?);
-Output_File_Stuff('?##? File Name  ?   Size   ? Description  '+PadLeftStr(s,34)+'  ?);
-Output_File_Stuff('斂鐘闡闡闡闡闡闡謐闡闡闡闡鐘闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡
-闡闡闡闡闡闡?);
-  END
-  ELSE
-  BEGIN
-    Output_File_Stuff('矬鐃闡闡闡闡闡闡薩闡薩闡闡鐃闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡�
-    �闡闡闡闡闡闡闡?);
-    Output_File_Stuff('?##?File Name  ?Pts? Size ? Description  '+PadLeftStr(s,34)+'  ?);
-    Output_File_Stuff('斂鐘闡闡闡闡闡闡謐闡謐闡闡鐘闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡闡�
-    �闡闡闡闡闡闡闡?);
-  END;
-  *)
 
   IF (NOT General.FileCreditRatio) THEN
     lRGLngStr(63,FALSE)
@@ -518,6 +547,7 @@ VAR
   TempStr2: AStr;
   LineNum,
   NumExtDesc: Byte;
+  BK: Str52;
 
   FUNCTION SubStone(SrcStr,OldStr,NewStr: AStr; IsCaps: Boolean): AStr;
   VAR
@@ -544,7 +574,7 @@ BEGIN
   TempStr1 := FileInfo.FileName;
   IF (SearchString <> '') THEN
     TempStr1 := SubStone(TempStr1,SearchString,''+AllCaps(SearchString)+'',TRUE);
-  TempStr := TempStr + ' '+TempStr1+' '+GetFileStats(FileInfo)+'';
+  TempStr := TempStr + ' '+TempStr1+' '+GetFileStats(FileInfo)+'';
 
   TempStr2 := TempStr;
 
@@ -568,7 +598,7 @@ BEGIN
 
   IF (FileInfo.VPointer <> -1) THEN
   BEGIN
-    LoadVerbArray(FileInfo,ExtendedArray,NumExtDesc);
+    LoadVerbArray11(FileInfo,ExtendedArray,NumExtDesc);
     LineNum := 1;
     WHILE (LineNum <= NumExtDesc) AND (NOT Next) AND (NOT Abort) AND (NOT HangUp) DO
     BEGIN
@@ -749,6 +779,739 @@ END;
 PROCEDURE ListFileSpec(FName: Str12);
 VAR
   FArrayRecNum: Byte;
+
+  PROCEDURE ListFileSpec_LB(CONST Spec: Str12);
+  CONST
+    MAX_LB_FILES = 6000;
+  TYPE
+    TRecArr = ARRAY [1..MAX_LB_FILES] OF Integer;
+    TYArr   = ARRAY [1..MAX_LB_FILES] OF Integer;
+    PRecArr = ^TRecArr;
+    PYArr   = ^TYArr;
+  VAR
+    Recs: PRecArr;
+    YPos: PYArr;
+    DirFileRecNum: Integer;
+    Total: Integer;
+    StartIdx: Integer;
+    Sel: Integer;
+    LastSel: Integer;
+    EndIdx: Integer;
+    Idx: Integer;
+     PageSize: Integer;
+    W: Word;
+    TransferFlags: TransferFlagSet;
+    NeedRedraw: Boolean;
+    SaveTempPause: Boolean;
+    SaveFRL: Byte;
+    SaveAllowContinue: Boolean;
+    StartExt: Integer;
+    EndExt: Integer;
+    ContFile: Integer;
+    PageExtShown: Integer;
+    NextContFile: Integer;
+    NextStartExt: Integer;
+    StackTop: Integer;
+    ContStack: ARRAY[0..40] OF Integer;
+    ExtStack: ARRAY[0..40] OF Integer;
+    FI: FileInfoRecordType;
+    BK: Str52;
+
+    WinTop: Integer;
+    WinBot: Integer;
+    ListTop: Integer;
+    ListBot: Integer;
+    MaxLines: Integer;
+  FUNCTION BatchKeyForFI(CONST FI: FileInfoRecordType): Str52;
+BEGIN
+  IF Common.Exist(MemFileArea.DLPath+FI.FileName) THEN
+    BatchKeyForFI := Common.SQOutSp(MemFileArea.DLPath+FI.FileName)
+  ELSE
+    BatchKeyForFI := Common.SQOutSp(MemFileArea.ULPath+FI.FileName);
+END;
+
+FUNCTION BatchKeyForFI11(CONST FI: FileInfoRecordType): Str52;
+BEGIN
+  BatchKeyForFI11 := BatchKeyForFI(FI);
+END;
+
+
+PROCEDURE AddBatchDLByKey(CONST FI: FileInfoRecordType; CONST BKey: AStr);
+VAR
+  BD: BatchDLRecordType;
+  Exists: Boolean;
+BEGIN
+  Exists := FALSE;
+
+  { Use General.DataPath directly; some source trees don't expose General.BatchDLPath }
+  Assign(BatchDLFile, General.DataPath + 'BATCHDL.DAT');
+  {$I-} Reset(BatchDLFile); {$I+}
+  IF (IOResult <> 0) THEN
+  BEGIN
+    {$I-} Rewrite(BatchDLFile); {$I+}
+  END;
+  IF (IOResult <> 0) THEN
+    EXIT;
+
+  Seek(BatchDLFile, 0);
+  WHILE (NOT EOF(BatchDLFile)) AND (NOT Exists) DO
+  BEGIN
+    Read(BatchDLFile, BD);
+    IF (BD.BDLUserNum = UserNum) AND (BD.BDLFileName = BKey) THEN
+      Exists := TRUE;
+  END;
+
+  IF NOT Exists THEN
+  BEGIN
+    FillChar(BD, SizeOf(BD), 0);
+    BD.BDLUserNum := UserNum;
+    BD.BDLTime := 0;
+    BD.BDLFSize := FI.FileSize;
+    BD.BDLPoints := FI.FilePoints;
+    BD.BDLFileName := BKey;
+    Seek(BatchDLFile, FileSize(BatchDLFile));
+    Write(BatchDLFile, BD);
+  END;
+
+  Close(BatchDLFile);
+END;
+
+
+PROCEDURE RecalcBatchDLStats;
+VAR
+  R: LongInt;
+BEGIN
+  { Recalculate batch counters from disk to keep NumBatchDLFiles/size/time/points in sync.
+    This prevents the batch remove prompt from showing the wrong range (e.g. 1-3) when
+    more files exist in BATCHDL.DAT, and properly detects an empty queue. }
+  NumBatchDLFiles := 0;
+  BatchDLTime := 0;
+  BatchDLSize := 0;
+  BatchDLPoints := 0;
+
+  Assign(BatchDLFile,General.DataPath+'BATCHDL.DAT');
+  Reset(BatchDLFile);
+  IF (IOResult <> 0) THEN
+    Exit;
+
+  IF (FileSize(BatchDLFile) > 0) THEN
+    FOR R := 0 TO (FileSize(BatchDLFile) - 1) DO
+    BEGIN
+      Seek(BatchDLFile,R);
+      Read(BatchDLFile,BatchDL);
+      IF (BatchDL.BDLUserNum = UserNum) THEN
+      BEGIN
+        Inc(NumBatchDLFiles);
+        Inc(BatchDLTime,BatchDL.BDLTime);
+        Inc(BatchDLSize,BatchDL.BDLFSize);
+        Inc(BatchDLPoints,BatchDL.BDLPoints);
+      END;
+    END;
+
+  Close(BatchDLFile);
+  LastError := IOResult;
+END;
+
+PROCEDURE RemoveBatchDLByKey(CONST BK: Str52);
+VAR
+  R, R1: LongInt;
+BEGIN
+  { Always resync first in case counters were off. }
+  RecalcBatchDLStats;
+  IF (NumBatchDLFiles = 0) THEN
+    Exit;
+
+  Assign(BatchDLFile,General.DataPath+'BATCHDL.DAT');
+  Reset(BatchDLFile);
+  IF (IOResult <> 0) THEN
+    Exit;
+
+  R := 0;
+  WHILE (R < FileSize(BatchDLFile)) DO
+  BEGIN
+    Seek(BatchDLFile,R);
+    Read(BatchDLFile,BatchDL);
+
+    IF (BatchDL.BDLUserNum = UserNum) AND (BatchDL.BDLFileName = BK) THEN
+    BEGIN
+      { Update counters for this removed record. }
+      Dec(NumBatchDLFiles);
+      Dec(BatchDLTime,BatchDL.BDLTime);
+      Dec(BatchDLSize,BatchDL.BDLFSize);
+      Dec(BatchDLPoints,BatchDL.BDLPoints);
+      { Shift records down to remove the entry at index R. }
+      FOR R1 := R TO (FileSize(BatchDLFile)-2) DO
+      BEGIN
+        Seek(BatchDLFile,R1+1);
+        Read(BatchDLFile,BatchDL);
+        Seek(BatchDLFile,R1);
+        Write(BatchDLFile,BatchDL);
+      END;
+
+      { Remove last (now duplicated) record. }
+      Seek(BatchDLFile,FileSize(BatchDLFile)-1);
+      Truncate(BatchDLFile);
+
+      { Do NOT increment R here; keep it to catch duplicates that shifted into this slot. }
+    END
+    ELSE
+      Inc(R);
+  END;
+
+  Close(BatchDLFile);
+  LastError := IOResult;
+
+  { Final authoritative resync from disk for safety. }
+  RecalcBatchDLStats;
+END;
+
+PROCEDURE DrawName(I: Integer; Hi: Boolean);
+VAR
+  BK: Str52;
+  Y: Integer;
+BEGIN
+  IF (I < 1) OR (I > Total) THEN
+    Exit;
+  IF (YPos^[I] < 1) THEN
+    Exit;
+  Y := YPos^[I] + 1;
+  { Guard: never let the second-line filename paint into footer area }
+  IF (Y < ListTop) OR (Y > ListBot) THEN
+    Exit;
+  Seek(FileInfoFile,Recs^[I]);
+  Read(FileInfoFile,FI);
+  BK := BatchKeyForFI11(FI);
+
+  { batch marker at column 4 }
+  ANSIG(4,Y);
+  Print(' ');
+
+  { filename starts at column 5 }
+  ANSIG(5,Y);
+  IF (Hi) THEN
+    UserColor(7)
+  ELSE
+    UserColor(1);
+  PrintACR(PadRightStr(FI.FileName,12));
+  UserColor(1);
+END;
+
+FUNCTION FileRecNumStr(N: Integer): AStr;
+VAR
+  S: AStr;
+BEGIN
+  S := IntToStr(N);
+  IF (N < 10) THEN
+    S := ' ' + S;
+  FileRecNumStr := S;
+END;
+
+PROCEDURE DisplayFileNoPause(VAR FI: FileInfoRecordType; RecNum: Integer);
+VAR
+  S, S1, S2, NumStr: AStr;
+  L, NumExt: Byte;
+  Batched: Boolean;
+BEGIN
+  IF ((RecNum MOD 100) < 10) THEN
+    NumStr := ' ' + IntToStr(RecNum MOD 100)
+  ELSE
+    NumStr := IntToStr(RecNum MOD 100);
+  Batched := File6.CheckBatchDL(BatchKeyForFI(FI));
+  { first line }
+  IF Batched THEN
+    S := '^1*^0'
+  ELSE
+    S := ' ';
+  S := S + '' + NumStr + ' ';
+  PrintACR(S);
+
+  UserColor(1);
+  PrintACR(PadRightStr(FI.FileName,12));
+  UserColor(1);
+
+  S := ' ' + GetFileStats(FI) + '';
+  S2 := FI.Description;
+  IF (LennMCI(S2) > 50) THEN
+    S2 := Copy(S2,1,Length(S2) - (LennMCI(S2) - 50));
+  S := S + ' ' + S2;
+
+  Inc(Lines);
+  PrintACR(S);
+
+  { extended .ext description lines }
+  IF (FI.VPointer <> -1) THEN
+  BEGIN
+    LoadVerbArray11(FI,ExtendedArray,NumExt);
+    L := 1;
+    WHILE (L <= NumExt) AND (NOT Abort) AND (NOT HangUp) DO
+    BEGIN
+      S1 := ExtendedArray[L];
+      S := PadLeftStr('',28) + '' + S1 + '';
+      Inc(Lines);
+      PrintACR(S);
+      Inc(L);
+    END;
+  END;
+END;
+
+PROCEDURE DisplayFileChunk(VAR FI: FileInfoRecordType; RecNum: Integer;
+                           ExtStart: Integer; MaxLines: Integer;
+                           VAR UsedLines, NewExt: Integer);
+VAR
+  S, S1, S2, NumStr: AStr;
+  L, NumExt: Byte;
+  Batched: Boolean;
+BEGIN
+  {UsedLines is an counter for the page; do not reset it here - EVER!}
+  NewExt := ExtStart;
+
+  { always print the main file line }
+  IF ((RecNum MOD 100) < 10) THEN
+    NumStr := ' ' + IntToStr(RecNum MOD 100)
+  ELSE
+    NumStr := IntToStr(RecNum MOD 100);
+    Batched := File6.CheckBatchDL(BatchKeyForFI(FI));
+    IF Batched THEN
+      S := '^1*^0'
+    ELSE
+      S := AOnOff(DayNum(PD2Date(FI.FileDate)) >= DayNum(PD2Date(NewFileDate)),'*',' ');
+    S := S + '' + NumStr + ' ';
+
+
+  S1 := FI.FileName;
+  S := S + '' + S1 + ' ' + GetFileStats(FI) + '';
+  S2 := FI.Description;
+  IF (LennMCI(S2) > 50) THEN
+    S2 := Copy(S2,1,Length(S2) - (LennMCI(S2) - 50));
+  S := S + ' ' + S2;
+
+  Inc(Lines);
+  Inc(UsedLines);
+  PrintACR(S);
+
+  { extended .ext description lines, starting at ExtStart+1 }
+  IF (FI.VPointer <> -1) AND (UsedLines < MaxLines) THEN
+  BEGIN
+    LoadVerbArray11(FI,ExtendedArray,NumExt);
+    L := ExtStart + 1;
+    WHILE (L <= NumExt) AND (UsedLines < MaxLines) AND (NOT Abort) AND (NOT HangUp) DO
+    BEGIN
+      S1 := ExtendedArray[L];
+      S := PadLeftStr('',28) + '' + S1 + '';
+      Inc(Lines);
+      Inc(UsedLines);
+      PrintACR(S);
+      NewExt := L;
+      Inc(L);
+    END;
+  END;
+END;
+
+FUNCTION FileHeight(VAR FI: FileInfoRecordType): Integer;
+VAR
+  N: Byte;
+BEGIN
+  FileHeight := 1;
+  IF (FI.VPointer <> -1) THEN
+  BEGIN
+    LoadVerbArray11(FI,ExtendedArray,N);
+    FileHeight := 1 + N;
+  END;
+END;
+
+PROCEDURE PrintFull(I: Integer);
+VAR
+  H: Integer;
+BEGIN
+  Seek(FileInfoFile,Recs^[I]);
+  Read(FileInfoFile,FileInfo);
+  H := FileHeight(FileInfo);
+  { if it won't fit, caller stops; still use record header Y }
+  DisplayFileNoPause(FileInfo,I);
+END;
+
+
+  FUNCTION TwoDigit(N: LongInt): Str2;
+  VAR S: String[3];
+  BEGIN
+    IF (N > 99) THEN
+      N := 99;
+    S := IntToStr(N);
+    IF (Length(S) = 1) THEN
+      S := '0' + S;
+    TwoDigit := S;
+  END;
+
+  FUNCTION FormatHMS(Secs: LongInt): Str8;
+  VAR
+    H, M, S: LongInt;
+  BEGIN
+    IF (Secs < 0) THEN
+      Secs := 0;
+    H := Secs DIV 3600;
+    Secs := Secs MOD 3600;
+    M := Secs DIV 60;
+    S := Secs MOD 60;
+    FormatHMS := TwoDigit(H) + ':' + TwoDigit(M) + ':' + TwoDigit(S);
+  END;
+
+  PROCEDURE DrawLBFooter;
+VAR
+  FooterY1, FooterY2, FooterY3: Integer;
+BEGIN
+   {Uses bottom-of-window coordinates so it follows status-line on/off. }
+
+  FooterY2 := Hi(WindMax);
+  FooterY1 := FooterY2 - 1;
+  FooterY3 := FooterY2 - 2;
+
+  { Set/reset ANSI attributes safely (no bleed) }
+  Prompt(#27'[0m');
+  Prompt(#27'[37;40m');
+
+  { Line 1 (new): filebase/batch help }
+  ANSIG(1, FooterY3);
+  Prompt(#27'[0K');
+  lRGLngStr(290,FALSE);
+  {Prompt('SPACE=Tag  ENTER=DL  D=Batch DL  Q/ESC=Quit');}
+  Prompt(#27'[0K');
+
+  { Line 2 (from MAIL2) }
+  ANSIG(1, FooterY1);
+  Prompt(#27'[0K');
+  lRGLngStr(291,FALSE);
+  Prompt(#27'[0K');
+
+  { Line 3 (from MAIL2) }
+  ANSIG(1, FooterY2);
+  Prompt(#27'[0K');
+  lRGLngStr(292,FALSE);
+  Prompt(#27'[0K');
+
+  { Restore Renegade normal colors for anything after this }
+  { stripped for remote ANSI safety }
+  Prompt(Chr(19)+Chr(7));
+
+  { Safety: leave cursor in the list region so any un-positioned output
+    cannot bleed into the footer area. }
+  ANSIG(1, Hi(WindMin) + 1);
+END;
+
+
+    PROCEDURE DrawPage;
+VAR
+  UsedLines: Integer;
+  NumExt: Byte;
+  NewExt: Integer;
+  CurExtStart: Integer;
+  CurIdx: Integer;
+  BK: Str52;
+BEGIN
+  FileAreaNameDisplayed := FALSE;
+  CLS;
+  WinTop := Hi(WindMin) + 1;
+  WinBot := Hi(WindMax) + 1;
+  ListTop := WinTop + 2;
+  { IMPORTANT:
+    Each entry can draw a second "name" line via DrawName(YPos+1).
+    If the last usable list row is too close to the footer, that +1 can
+    land on the footer's top line, causing the "random filename in footer"
+    scribble.  To prevent that, reserve ONE extra row above the 3-line
+    footer.
+  }
+  ListBot := WinBot - 5;  { reserve 3-line footer + 2-row safety }
+  MaxLines := (ListBot - ListTop) + 1;
+  FillChar(YPos^, SizeOf(TYArr), 0);
+  DisplayFileAreaHeader;
+  UsedLines := 0;
+  Lines := 0;
+  SaveFRL := FileRedisplayLines;
+  FileRedisplayLines := 255;
+  TempPause := FALSE;
+  EndIdx := StartIdx;
+  EndExt := 0;
+  NextContFile := 0;
+  NextStartExt := 0;
+
+  IF (ContFile > 0) THEN
+  BEGIN
+    CurIdx := ContFile;
+    CurExtStart := StartExt;
+  END
+  ELSE
+  BEGIN
+    CurIdx := StartIdx;
+    CurExtStart := 0;
+  END;
+
+  WHILE (CurIdx <= Total) AND (UsedLines < MaxLines) DO
+  BEGIN
+    Seek(FileInfoFile, Recs^[CurIdx]);
+    Read(FileInfoFile, FileInfo);
+    NumExt := 0;
+    IF (FileInfo.VPointer <> -1) THEN
+      LoadVerbArray11(FileInfo, ExtendedArray, NumExt);
+
+    YPos^[CurIdx] := (ListTop + UsedLines);
+    NewExt := 0;
+    DisplayFileChunk(FileInfo, CurIdx, CurExtStart, MaxLines, UsedLines, NewExt);
+    EndIdx := CurIdx;
+
+    IF (NumExt > 0) AND (NewExt < NumExt) THEN
+    BEGIN
+      NextContFile := CurIdx;
+      NextStartExt := NewExt;
+      Break;
+    END;
+
+    Inc(CurIdx);
+    CurExtStart := 0;
+  END;
+
+  FileRedisplayLines := SaveFRL;
+  IF (ContFile > 0) THEN
+    PageSize := 1
+  ELSE
+    PageSize := (EndIdx - StartIdx + 1);
+  DrawName(Sel, TRUE);
+  LastSel := Sel;
+  DrawLBFooter;
+  NeedRedraw := FALSE;
+END;
+
+  BEGIN
+    Abort := FALSE;
+    Next := FALSE;
+    SaveTempPause := TempPause;
+    SaveAllowContinue := AllowContinue;
+    AllowContinue := FALSE;
+    TempPause := FALSE;
+    Total := 0;
+    RecNo(FileInfo,Spec,DirFileRecNum);
+    IF (BadDownloadPath) THEN
+      Exit;
+    New(Recs);
+    New(YPos);
+    FillChar(YPos^, SizeOf(TYArr), 0);
+    WHILE (DirFileRecNum <> -1) AND (Total < MAX_LB_FILES) AND (NOT HangUp) DO
+    BEGIN
+      Seek(FileInfoFile,DirFileRecNum);
+      Read(FileInfoFile,FileInfo);
+      IF (CanSee(FileInfo)) THEN
+      BEGIN
+        Inc(Total);
+        Recs^[Total] := DirFileRecNum;      END;
+      NRecNo(FileInfo,DirFileRecNum);
+    END;
+
+    IF (Total < 1) THEN
+    BEGIN
+      NL;
+      Print('^8No files found.^0');
+      Dispose(YPos);
+      Dispose(Recs);
+      Exit;
+    END;
+
+    StartIdx := 1;
+    ContFile := 0;
+    StartExt := 0;
+    StackTop := 0;
+    Sel := 1;
+    LastSel := 1;
+    EndIdx := 1;
+    NeedRedraw := TRUE;
+
+    REPEAT
+      IF (NeedRedraw) THEN
+        DrawPage;
+      {WKey removed for LB key handling}
+      W := InKey;
+
+      IF (W = F_UP) THEN
+      BEGIN
+        IF (StackTop > 0) THEN
+        BEGIN
+          Dec(StackTop);
+          ContFile := ContStack[StackTop];
+          StartExt := ExtStack[StackTop];
+          StartIdx := ContFile;
+          Sel := ContFile;
+          NeedRedraw := TRUE;
+        END
+        ELSE IF (ContFile > 0) AND (StartExt > 0) THEN
+        BEGIN
+          StartExt := 0;
+          StartIdx := ContFile;
+          Sel := ContFile;
+          NeedRedraw := TRUE;
+        END
+        ELSE IF (Sel > 1) THEN
+        BEGIN
+          Dec(Sel);
+          ContFile := 0;
+          StartExt := 0;
+          StackTop := 0;
+        END;
+      END
+      ELSE IF (W = F_DOWN) THEN
+      BEGIN
+        IF (NextContFile = Sel) AND (NextStartExt > 0) THEN
+        BEGIN
+          IF (StackTop < 40) THEN
+          BEGIN
+            ContStack[StackTop] := Sel;
+            ExtStack[StackTop] := StartExt;
+            Inc(StackTop);
+          END;
+          ContFile := Sel;
+          StartExt := NextStartExt;
+          StartIdx := ContFile;
+          Sel := ContFile;
+          NeedRedraw := TRUE;
+        END
+        ELSE IF (Sel < Total) THEN
+        BEGIN
+          Inc(Sel);
+          ContFile := 0;
+          StartExt := 0;
+          StackTop := 0;
+        END;
+      END
+      ELSE IF (W = Ord('V')) OR (W = Ord('v')) THEN
+      BEGIN
+        Seek(FileInfoFile,Recs^[Sel]);
+        Read(FileInfoFile,FI);
+        IF (ValidIntArcType(FI.FileName)) THEN
+        BEGIN
+          IF Common.Exist(MemFileArea.DLPath+FI.FileName) THEN
+            ViewInternalArchive(MemFileArea.DLPath+FI.FileName)
+          ELSE
+            ViewInternalArchive(MemFileArea.ULPath+FI.FileName);
+          NeedRedraw := TRUE;
+        END
+        ELSE
+        BEGIN
+          NL;
+          Print('^8Not a supported archive.^0');
+        END;
+      
+      END
+
+      ELSE IF (W = Ord('D')) OR (W = Ord('d')) THEN
+      BEGIN
+        RecalcBatchDLStats;
+        IF (NumBatchDLFiles = 0) THEN
+        BEGIN
+          NL;
+          Print('^8Batch queue is empty.^0');
+        END
+        ELSE
+        BEGIN
+          CLS;
+          File6.BatchDownload;
+          NeedRedraw := TRUE;
+        END;
+      END
+
+      ELSE IF (W = 32) THEN
+      BEGIN
+        { Lightbar tag toggle: keep batch status message from showing up.
+          Placedthe cursor on the footer line so any output lands there and is immediately 
+          overwritten when footer is redrawn. }
+
+        SaveAllowContinue := AllowContinue;
+        TempPause := TRUE;
+        AllowContinue := FALSE;
+        { Place cursor at the footer so any legacy batch messages (from File8.Send)
+          are printed where they are immediately overwriten }
+        ANSIG(1, Hi(WindMax));
+        Prompt(#27+'[2K');
+        Seek(FileInfoFile,Recs^[Sel]);
+        Read(FileInfoFile,FI);
+        BK := BatchKeyForFI11(FI);
+        IF File6.CheckBatchDL(BK) THEN
+        BEGIN
+          RemoveBatchDLByKey(BK);
+          { ensure batch counters/empty-state are correct immediately }
+          RecalcBatchDLStats;
+        END
+        ELSE
+        BEGIN
+          TransferFlags := [IsCheckRatio,lIsAddDLBatch];
+          IF (FACDROM IN MemFileArea.FAFlags) THEN
+            Include(TransferFlags,IsCDRom);
+          IF Common.Exist(MemFileArea.DLPath+FI.FileName) THEN
+            File8.Send(FI,Recs^[Sel],MemFileArea.DLPath,TransferFlags)
+          ELSE
+            File8.Send(FI,Recs^[Sel],MemFileArea.ULPath,TransferFlags);
+          { resync counters after add }
+          RecalcBatchDLStats;
+        END;
+
+                { restore output flags and redraw footer to wipe any stray output }
+        AllowContinue := SaveAllowContinue;
+        TempPause := SaveTempPause;
+        DrawLBFooter;
+        ANSIG(1, YPos^[Sel]);
+NeedRedraw := TRUE;
+      END
+ELSE IF (W = 13) OR (W = 10) THEN
+      BEGIN
+        Seek(FileInfoFile,Recs^[Sel]);
+        Read(FileInfoFile,FI);
+        TransferFlags := [IsCheckRatio];
+        CLS;
+        DLX(FI,Recs^[Sel],TransferFlags);
+        IF (IsKeyboardAbort IN TransferFlags) THEN
+          Break;
+        NeedRedraw := TRUE;
+      END
+      ELSE IF (W = 27) THEN
+        Break
+      ELSE IF (W = Ord('Q')) OR (W = Ord('q')) THEN
+        Break;
+
+IF (Sel < StartIdx) THEN
+      BEGIN
+        StartIdx := StartIdx - PageSize;
+        IF (StartIdx < 1) THEN
+          StartIdx := 1;
+        Sel := StartIdx;
+        ContFile := 0;
+        StartExt := 0;
+        StackTop := 0;
+        NeedRedraw := TRUE;
+      END
+      ELSE IF (Sel > EndIdx) THEN
+      BEGIN
+        StartIdx := EndIdx + 1;
+        IF (StartIdx > Total) THEN
+          StartIdx := Total - PageSize + 1;
+        IF (StartIdx < 1) THEN
+          StartIdx := 1;
+        Sel := StartIdx;
+        ContFile := 0;
+        StartExt := 0;
+        StackTop := 0;
+        NeedRedraw := TRUE;
+      END
+      ELSE IF (Sel <> LastSel) THEN
+      BEGIN
+        DrawName(LastSel,FALSE);
+        FileRedisplayLines := SaveFRL;
+        DrawName(Sel,TRUE);
+        LastSel := Sel;
+      END;
+    UNTIL (HangUp);
+    Dispose(YPos);
+    Dispose(Recs);
+    AllowContinue := SaveAllowContinue;
+    TempPause := SaveTempPause;
+  END;
+
+
+
 BEGIN
   Abort := FALSE;
   Next := FALSE;
@@ -767,13 +1530,17 @@ BEGIN
   END
   ELSE
     FName := Align(FName);
-  SearchFileAreaSpec(FileArea,FName,FArrayRecNum);
+  IF (OkANSI) AND (General.UseLightBars) AND (LightBars IN ThisUser.SFlags) THEN
+    ListFileSpec_LB(FName)
+  ELSE
+    SearchFileAreaSpec(FileArea,FName,FArrayRecNum);
 END;
 
 PROCEDURE SearchFileAreaDescription(FArea: Integer; SearchString: Str20; VAR FArrayRecNum: Byte);
 VAR
   LineNum,
   NumExtDesc: Byte;
+  BK: Str52;
   DirFileRecNum: Integer;
   SearchStringFound,
   Found: Boolean;
@@ -799,7 +1566,7 @@ BEGIN
                              (Pos(SearchString,AllCaps(FileInfo.FileName)) <> 0));
         IF (NOT SearchStringFound) AND (FileInfo.VPointer <> -1) THEN
         BEGIN
-          LoadVerbArray(FileInfo,ExtendedArray,NumExtDesc);
+          LoadVerbArray11(FileInfo,ExtendedArray,NumExtDesc);
           LineNum := 1;
           WHILE (LineNum <= NumExtDesc) AND (NOT SearchStringFound) AND (NOT Abort) AND (NOT HangUp) DO
           BEGIN
@@ -949,7 +1716,7 @@ BEGIN
               {BackErase(15 + LennMCI(MemFileArea.AreaName) + Length(IntToStr(CompFileArea(FArea,0))));}
               FOR Counter := 1 TO LennMCI(lRGLngStr(95,TRUE)) DO
                 BackSpace;
-                {LeeW: fixed that ^^ should we check to make sure the lang isn't %DF???}
+               
             END;
         END;
       Close(FileInfoFile);
@@ -1008,6 +1775,7 @@ VAR
   SaveFArea,
   NumFAreas: Integer;
   SaveTempPause: Boolean;
+  SaveAllowContinue: Boolean;
 BEGIN
   IF (MenuOption <> '') THEN
     CASE Upcase(MenuOption[1]) OF
@@ -1052,17 +1820,66 @@ BEGIN
                 LastCommandOvr := TRUE;
             END;
       'L' : BEGIN
-              SaveTempPause := TempPause;
+              Abort := FALSE;
+    Next := FALSE;
+    SaveTempPause := TempPause;
+    SaveAllowContinue := AllowContinue;
+    AllowContinue := FALSE;
               TempPause := FALSE;
               FArea := 1;
               NumFAreas := 0;
-              Cmd := '?';
-              REPEAT
-                SaveFArea := FArea;
-                IF (Cmd = '?') THEN
-                  LFileAreaList(FArea,NumFAreas,6,FALSE);
-                InputChar(LRGLngStr(70,TRUE),Cmd,'Q[]?',[CapAll]); { File area list prompt }
-                TempPause := FALSE;
+              IF (OkANSI) AND (General.UseLightBars) AND
+                 (LightBars IN ThisUser.SFlags) THEN
+              BEGIN
+                LightBarCmd := 1;
+                LightBarFirstCmd := TRUE;
+                InputStr := '?';
+                REPEAT
+                  SaveFArea := FArea;
+                  IF (InputStr = '?') THEN
+                    LFileAreaList(FArea,NumFAreas,6,FALSE);
+                  FileAreaScanInput(LRGLngStr(72,TRUE),
+                    Length(IntToStr(HighFileArea)),InputStr,'Q[]?',
+                    LowFileArea,HighFileArea);
+                  IF (InputStr <> 'Q') THEN
+                  BEGIN
+                    IF (InputStr = '[') THEN
+                    BEGIN
+                      FArea := SaveFArea - ((PageLength - 5) * 2);
+                      IF (FArea < 1) THEN
+                        FArea := 1;
+                      InputStr := '?';
+                    END
+                    ELSE IF (InputStr = ']') THEN
+                    BEGIN
+                      IF (FArea > NumFileAreas) THEN
+                        FArea := SaveFArea;
+                      InputStr := '?';
+                    END
+                    ELSE IF (InputStr = '?') THEN
+                    BEGIN
+                      LRGLngStr(71,FALSE);
+                      FArea := SaveFArea;
+                    END
+                    ELSE IF (StrToInt(InputStr) > 0) THEN
+                    BEGIN
+                      FArea := StrToInt(InputStr);
+                      IF (FArea <> FileArea) THEN
+                        ChangeFileArea(FArea);
+                      LastCommandOvr := TRUE;
+                    END;
+                  END;
+                UNTIL (InputStr = 'Q') OR (HangUp);
+              END
+              ELSE
+              BEGIN
+                Cmd := '?';
+                REPEAT
+                  SaveFArea := FArea;
+                  IF (Cmd = '?') THEN
+                    LFileAreaList(FArea,NumFAreas,6,FALSE);
+                  InputChar(LRGLngStr(70,TRUE),Cmd,'Q[]?',[CapAll]);
+                  TempPause := FALSE;
                 IF (Cmd <> 'Q') THEN
                 BEGIN
                   IF (Cmd = '[') THEN
@@ -1093,10 +1910,12 @@ BEGIN
                     FArea := SaveFArea;
                   END
                 END;
-              UNTIL (Cmd = 'Q') OR (HangUp);
-              TempPause := SaveTempPause;
+                UNTIL (Cmd = 'Q') OR (HangUp);
+              END;
+              AllowContinue := SaveAllowContinue;
+    TempPause := SaveTempPause;
               LastCommandOvr := TRUE;
-           END;
+            END;
     ELSE
     BEGIN
       IF (StrToInt(MenuOption) > 0) THEN
@@ -1116,6 +1935,8 @@ BEGIN
   END
   ELSE
   BEGIN
+    Abort := FALSE;
+    Next := FALSE;
     SaveTempPause := TempPause;
     TempPause := FALSE;
     FArea := 1;
@@ -1188,6 +2009,7 @@ BEGIN
         END;
       END;
     UNTIL (InputStr = 'Q') OR (HangUp);
+    AllowContinue := SaveAllowContinue;
     TempPause := SaveTempPause;
     LastCommandOvr := TRUE;
   END;
@@ -1217,7 +2039,7 @@ BEGIN
     FileName := 'TEMPFILE';
     DLPath := TempPath;
     ULPath := TempPath;
-    MaxFiles := 32767; { LeeW: Changed this to 16b integer max }
+    MaxFiles := 32767; 
     Password := '';
     ArcType := 1;
     CmtType := 1;
