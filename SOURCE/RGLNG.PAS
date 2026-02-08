@@ -667,8 +667,12 @@ BEGIN
                 RgStrNum := 288
               ELSE IF (S = 'MSG_LB_FOOTER_2') THEN
                 RgStrNum := 289
-			  ELSE IF (S = 'MSG_LB_GOTO') THEN
+              ELSE IF (S = 'FB_LB_FOOTER') THEN
                 RgStrNum := 290
+              ELSE IF (S = 'FB_LB_FOOTER_2') THEN
+                RgStrNum := 291
+              ELSE IF (S = 'FB_LB_FOOTER_3') THEN
+                RgStrNum := 292
                 {// END OF COMB }
                 (*
               ELSE IF (S = '') THEN
