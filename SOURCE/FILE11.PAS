@@ -46,6 +46,12 @@ USES
   Menus,
   TimeFunc;
 
+VAR
+  { Lightbar support flags for NewScan (F+N) }
+  LB_NewScanMode: Boolean;
+  LB_AdvanceNextArea: Boolean;
+  LB_QuitNewScan: Boolean;
+
 
 
 { Returns the exact batch-key used by File6.CheckBatchDL / RemoveBatchDLByKey }
@@ -843,7 +849,6 @@ VAR
 BEGIN
   Exists := FALSE;
 
-  { Use General.DataPath directly; some source trees don't expose General.BatchDLPath }
   Assign(BatchDLFile, General.DataPath + 'BATCHDL.DAT');
   {$I-} Reset(BatchDLFile); {$I+}
   IF (IOResult <> 0) THEN
@@ -967,24 +972,22 @@ END;
 
 PROCEDURE DrawName(I: Integer; Hi: Boolean);
 VAR
-  BK: Str52;
   Y: Integer;
 BEGIN
+  { Redraw ONLY the filename field on the file's MAIN line.
+    IMPORTANT: Do NOT draw on YPos+1, or we will overwrite the next entry
+    (and its red blinking NEW marker) when each file is a single-line entry. }
   IF (I < 1) OR (I > Total) THEN
     Exit;
   IF (YPos^[I] < 1) THEN
     Exit;
-  Y := YPos^[I] + 1;
-  { Guard: never let the second-line filename paint into footer area }
+
+  Y := YPos^[I]+1;
   IF (Y < ListTop) OR (Y > ListBot) THEN
     Exit;
+
   Seek(FileInfoFile,Recs^[I]);
   Read(FileInfoFile,FI);
-  BK := BatchKeyForFI11(FI);
-
-  { batch marker at column 4 }
-  ANSIG(4,Y);
-  Print(' ');
 
   { filename starts at column 5 }
   ANSIG(5,Y);
@@ -1216,10 +1219,10 @@ BEGIN
     Each entry can draw a second "name" line via DrawName(YPos+1).
     If the last usable list row is too close to the footer, that +1 can
     land on the footer's top line, causing the "random filename in footer"
-    scribble.  To prevent that, reserve ONE extra row above the 3-line
+    garbage.  To prevent that, reserve ONE extra row above the 3-line
     footer.
   }
-  ListBot := WinBot - 5;  { reserve 3-line footer + 2-row safety }
+  ListBot := WinBot - 4;  { footer starts at row 22 (4 lines: 22-25); allow highlight on row 21 }
   MaxLines := (ListBot - ListTop) + 1;
   FillChar(YPos^, SizeOf(TYArr), 0);
   DisplayFileAreaHeader;
@@ -1297,10 +1300,14 @@ END;
     BEGIN
       Seek(FileInfoFile,DirFileRecNum);
       Read(FileInfoFile,FileInfo);
-      IF (CanSee(FileInfo)) THEN
+            IF (CanSee(FileInfo)) AND
+         ((NOT LB_NewScanMode) OR
+          (DayNum(PD2Date(FileInfo.FileDate)) >= DayNum(PD2Date(NewFileDate))) OR
+          (FINotVal IN FileInfo.FIFlags)) THEN
       BEGIN
         Inc(Total);
-        Recs^[Total] := DirFileRecNum;      END;
+        Recs^[Total] := DirFileRecNum;
+      END;
       NRecNo(FileInfo,DirFileRecNum);
     END;
 
@@ -1416,15 +1423,9 @@ END;
 
       ELSE IF (W = 32) THEN
       BEGIN
-        { Lightbar tag toggle: keep batch status message from showing up.
-          Placedthe cursor on the footer line so any output lands there and is immediately 
-          overwritten when footer is redrawn. }
-
-        SaveAllowContinue := AllowContinue;
+                SaveAllowContinue := AllowContinue;
         TempPause := TRUE;
         AllowContinue := FALSE;
-        { Place cursor at the footer so any legacy batch messages (from File8.Send)
-          are printed where they are immediately overwriten }
         ANSIG(1, Hi(WindMax));
         Prompt(#27+'[2K');
         Seek(FileInfoFile,Recs^[Sel]);
@@ -1456,7 +1457,7 @@ END;
         ANSIG(1, YPos^[Sel]);
 NeedRedraw := TRUE;
       END
-ELSE IF (W = 13) OR (W = 10) THEN
+      ELSE IF (W = Ord('T')) OR (W = Ord('t')) THEN
       BEGIN
         Seek(FileInfoFile,Recs^[Sel]);
         Read(FileInfoFile,FI);
@@ -1467,17 +1468,53 @@ ELSE IF (W = 13) OR (W = 10) THEN
           Break;
         NeedRedraw := TRUE;
       END
+      ELSE IF (W = 13) OR (W = 10) THEN
+      BEGIN
+        { ENTER = next page; at end of NewScan list, continue to next area }
+        IF (Sel < Total) THEN
+        BEGIN
+          Sel := EndIdx + 1;
+          IF (Sel > Total) THEN
+            Sel := Total;
+          ContFile := 0;
+          StartExt := 0;
+          StackTop := 0;
+          NeedRedraw := TRUE;
+        END
+        ELSE IF (LB_NewScanMode) THEN
+        BEGIN
+          LB_AdvanceNextArea := TRUE;
+          Break;
+        END;
+      END
       ELSE IF (W = 27) THEN
-        Break
-      ELSE IF (W = Ord('Q')) OR (W = Ord('q')) THEN
+      BEGIN
+        IF (LB_NewScanMode) THEN
+          LB_QuitNewScan := TRUE;
         Break;
+      END
+      ELSE IF (W = Ord('Q')) OR (W = Ord('q')) THEN
+      BEGIN
+        IF (LB_NewScanMode) THEN
+          LB_QuitNewScan := TRUE;
+        Break;
+      END;
 
 IF (Sel < StartIdx) THEN
       BEGIN
+        { Page up: jump to bottom of previous page (unless already at very top) }
         StartIdx := StartIdx - PageSize;
         IF (StartIdx < 1) THEN
+        BEGIN
           StartIdx := 1;
-        Sel := StartIdx;
+          Sel := 1;
+        END
+        ELSE
+        BEGIN
+          Sel := StartIdx + PageSize - 1;
+          IF (Sel > Total) THEN
+            Sel := Total;
+        END;
         ContFile := 0;
         StartExt := 0;
         StackTop := 0;
@@ -1664,7 +1701,6 @@ BEGIN
 END;
 
 PROCEDURE NewFileScan(FArea: Integer; Global: Boolean; VAR FArrayRecNum: Byte);
-{^^ LeeW: EXO reporting this locking up -- investigate}
 VAR
 counter,
   DirFileRecNum: Integer;
@@ -1683,7 +1719,35 @@ BEGIN
           LIL := 0;
           {CLS;}
           lRGLngStr(95,FALSE); {Prompt('^0Scanning ^1'+MemFileArea.AreaName+' #'+IntToStr(CompFileArea(FileArea,0))+'^0 ...');}
+                    IF (OkANSI) AND (General.UseLightBars) AND (LightBars IN ThisUser.SFlags) THEN
+            BEGIN
+          { Quick pre-scan: only show a lightbar list if this area has any new files }
           WHILE (DirFileRecNum <> -1) AND (NOT Abort) AND (NOT HangUp) DO
+          BEGIN
+            Seek(FileInfoFile,DirFileRecNum);
+            Read(FileInfoFile,FileInfo);
+            IF ((CanSee(FileInfo)) AND (DayNum(PD2Date(FileInfo.FileDate)) >= DayNum(PD2Date(NewFileDate))))
+               OR (CanSee(FileInfo) AND (FINotVal IN FileInfo.FIFlags)) THEN
+            BEGIN
+              Found := TRUE;
+              Break;
+            END;
+            NRecNo(FileInfo,DirFileRecNum);
+          END;
+
+          IF (Found) AND (NOT Abort) AND (NOT HangUp) THEN
+          BEGIN
+            { Lightbar NewScan view for this area }
+            LB_NewScanMode := TRUE;
+            LB_AdvanceNextArea := FALSE;
+            LB_QuitNewScan := FALSE;
+            ListFileSpec('*.*');
+            LB_NewScanMode := FALSE;
+          END;
+            END
+          ELSE
+            BEGIN
+WHILE (DirFileRecNum <> -1) AND (NOT Abort) AND (NOT HangUp) DO
             BEGIN
               Seek(FileInfoFile,DirFileRecNum);
               Read(FileInfoFile,FileInfo);
@@ -1710,7 +1774,9 @@ BEGIN
                   Pause_Files;
                 END;
             END;
-          IF (NOT Found) THEN
+          
+            END;
+IF (NOT Found) THEN
             BEGIN
               LIL := 0;
               {BackErase(15 + LennMCI(MemFileArea.AreaName) + Length(IntToStr(CompFileArea(FArea,0))));}
@@ -1730,14 +1796,19 @@ VAR
 BEGIN
   FArea := 1;
   WHILE (FArea >= 1) AND (FArea <= NumFileAreas) AND (NOT Abort) AND (NOT HangUp) DO
-    BEGIN
-      NewFileScan(FArea,TRUE,FArrayRecNum);
-      IF (TextRec(NewFilesF).Mode = FMOutPut) THEN
-        Output_File_Stuff('');
-      WKey;
-      Inc(FArea);
-    END;
+  BEGIN
+    LB_AdvanceNextArea := FALSE;
+    LB_QuitNewScan := FALSE;
+    NewFileScan(FArea,TRUE,FArrayRecNum);
+    IF (LB_QuitNewScan) THEN
+      Break;
+    IF (TextRec(NewFilesF).Mode = FMOutPut) THEN
+      Output_File_Stuff('');
+    Inc(FArea);
+  END;
 END;
+
+
 
 PROCEDURE NewFilesScanSearchType(CONST MenuOption: Str50);
 VAR

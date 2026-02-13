@@ -1,8 +1,4 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
- 03/22/2022 fixed downloads not modifying user stats -- do testing to make sure all ok
- what about uploads???
-}
 UNIT File8;
 
 INTERFACE
@@ -287,13 +283,16 @@ BEGIN
     NL;
     Print('^1File added to batch download queue.');
     }
-    lRGLngStr(30,FALSE);
-    NL;
-    Print('^0Batch download queue:'+
-          ' ^1'+IntToStr(NumBatchDLFiles)+' '+Plural('file',NumBatchDLFiles)+
-          ', '+ConvertBytes(BatchDLSize,FALSE)+
-          ', '+FormatNumber(BatchDLPoints)+' '+Plural('file point',BatchDLPoints)+
-          ', '+FormattedTime(BatchDLTime)+'^0');
+    IF NOT (OkANSI AND General.UseLightBars AND (LightBars IN ThisUser.SFlags)) THEN
+    BEGIN
+      lRGLngStr(30,FALSE);
+      NL;
+      Print('^0Batch download queue:'+
+      ' ^1'+IntToStr(NumBatchDLFiles)+' '+Plural('file',NumBatchDLFiles)+
+      ', '+ConvertBytes(BatchDLSize,FALSE)+
+      ', '+FormatNumber(BatchDLPoints)+' '+Plural('file point',BatchDLPoints)+
+      ', '+FormattedTime(BatchDLTime)+'^0');
+    END;
 
     IF (IsFileAttach IN BatchDL.BDLFlags) THEN
       MemFileArea.AreaName := 'File Attach'
@@ -414,28 +413,6 @@ BEGIN
               SysOpLog('^1'+AOnOff(ProtocolNumber = -1,'Viewed','Downloaded')+' "^1'+SQOutSp(FileInfo.FileName)+
                        '^1" from ^1'+MemFileArea.AreaName+'.');
 
-              {
-                LeeW: This totals record seems to be screwing everything up --
-                      Was it part of unfinished batch DL implementation?
-              }
-
-              (*
-              FillChar(Totals,SizeOf(Totals),0);
-
-              Inc(Totals.FilesDL);
-              Inc(Totals.BytesDL,FileInfo.FileSize);
-              Inc(Totals.PointsDL,FileInfo.FilePoints);
-
-              IF (ChargeFileRatio(FileArea)) THEN
-                BEGIN
-                  Inc(Totals.FilesDLRatio);
-                  Inc(Totals.BytesDLRatio,FileInfo.FileSize);
-                END;
-
-              IF (ChargeFilePoints(FileArea)) THEN
-                Inc(Totals.PointsDLRatio,FileInfo.FilePoints);
-              *)
-
               IF ((ThisUser.Downloads + 1{Totals.FilesDLRatio}) < 2147483647) THEN
                 Inc(ThisUser.Downloads{,Totals.FilesDLRatio})
               ELSE
@@ -474,8 +451,6 @@ BEGIN
               SaveURec(ThisUser,UserNum);
 
               LIL := 0;
-
-              { LeeW: Improve these stats/make custo}
 
               NL;
               Print('^1Download statistics (Totals):^0');
