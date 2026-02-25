@@ -100,7 +100,6 @@ VAR
   JumpMode: Boolean;
   BEGIN
     LoadHeader(MN,MHeader);
-
     IF (MDeleted IN MHeader.Status) THEN
       StatusCh := 'D'
     ELSE IF (UnValidated IN MHeader.Status) THEN
@@ -138,45 +137,48 @@ VAR
 
   PROCEDURE PadRight(VAR SS: AStr; N: Byte); FORWARD;
 
-  PROCEDURE DrawLine(I: Byte; Selected: Boolean);
+    PROCEDURE DrawLine(I: Byte; Selected: Boolean);
   VAR
     L: AStr;
-    S2: AStr;
     S3: AStr;
   BEGIN
-    BuildLine(MsgList[I],L);
+    BuildLine(MsgList[I], L);
+    S3 := L;
+    PadRight(S3, 79);
 
-    { hard guard }
-    IF (Length(L) < 2) THEN
-      L := L + '  ';
+    { Clear the whole line first }
+    ANSIG(1, LineY[I]);
+    Prompt(#27 + '[0m');
+    Prompt(#27 + '[37;40m');
+    Prompt(#27 + '[0K');
+    ANSIG(1, LineY[I]);
 
-    { Never paint columns 1-2: do not clear or print there. }
-    { Clear from column 3 to end-of-line only (ANSI safe) }
-    ANSIG(3,LineY[I]);
-    Prompt(#27'[0m');
-    Prompt(#27'[0K');
-    ANSIG(3,LineY[I]);
-
-    { Lightbar starts at column 3 and ends at column 79 }
-    S2 := Copy(L,3,255);
     IF Selected THEN
     BEGIN
-      ANSIG(3,LineY[I]);
-      Prompt(#27'[1;37;44m');    { white on blue }
-      S3 := S2; PadRight(S3,77); Prompt(S3);
-      Prompt(#27'[0m');
+      { Highlight: keep original lightbar look for ALL columns }
+      Prompt(#27 + '[1;37;44m'); { white on blue }
+      Prompt(S3);
+      Prompt(#27 + '[0m');
     END
     ELSE
     BEGIN
-      ANSIG(3,LineY[I]);
-      Prompt(#27'[0m');
-{ stripped for remote ANSI safety }
-      S3 := S2; PadRight(S3,77); Prompt(S3);
-      Prompt(#27'[0m');
+      { Normal: status flag (col 1) light red; rest normal }
+      IF (Length(S3) >= 1) AND (S3[1] IN ['D','U','>','*']) THEN
+      BEGIN
+        Prompt(#27 + '[1;31;40m'); { light red on black }
+        Prompt(S3[1]);
+        Prompt(#27 + '[0m');
+        Prompt(#27 + '[37;40m');
+      END
+      ELSE
+        Prompt(Copy(S3, 1, 1));
+
+      Prompt(Copy(S3, 2, 78));
+      Prompt(#27 + '[0m');
     END;
   END;
 
-  PROCEDURE PadRight(VAR SS: AStr; N: Byte);
+PROCEDURE PadRight(VAR SS: AStr; N: Byte);
   BEGIN
     IF (N = 0) THEN
       EXIT;
@@ -726,22 +728,6 @@ BEGIN
     Exit;
   Abort := FALSE;
   Next := FALSE;
-  {
-  CLS;
-  PrintACR('
-????????????????????????????????????????????????????????????????????????????');
-  PrintACR('
-?
- Msg# 
-?
- Sender            
-? Receiver           
-?  '+'Subject           
-?! Posted 
-?');
-  PrintACR('
-??????????????????????????????????????????????????????????????????????????????');
-  }
   lRGLngStr(238,FALSE); { Public messages list header }
   Dec(Msg_On);
   NumDone := 0;
@@ -830,6 +816,7 @@ VAR
     LoadHeader(MN,MHeader);
 
     { Status marker (colored, exactly like ListMessages) }
+
     IF (MDeleted IN MHeader.Status) THEN
       OutS := Chr(19)+''''+'D'
     ELSE IF (UnValidated IN MHeader.Status) THEN
@@ -876,7 +863,6 @@ VAR
     FromS, ToS, SubjS: AStr;
   BEGIN
     LoadHeader(MN,MHeader);
-
     IF (MDeleted IN MHeader.Status) THEN
       StatusCh := 'D'
     ELSE IF (UnValidated IN MHeader.Status) THEN
@@ -984,19 +970,19 @@ VAR
       DrawRow(I2, (I2 = CurIdx));
 
         { Footer help lines (2-line footer) }
-    Prompt(#27'[0m');
-    Prompt(#27'[37;40m');
-    Prompt(#27'[0K');
+    Prompt(#27 + '[0m');
+    Prompt(#27 + '[37;40m');
+    Prompt(#27 + '[0K');
 
     ANSIG(1, Hi(WindMax)-1);
     lRGLngStr(288,FALSE);
 {    Prompt('ENTER=Read  I=Ignore  Q/ESC=Quit');}
-    Prompt(#27'[0K');
+    Prompt(#27 + '[0K');
 
     ANSIG(1, FooterY2);
     lRGLngStr(289,FALSE);
 {    Prompt('Up/Down=Move  PgUp/PgDn=Page  Home/End=Jump');}
-    Prompt(#27'[0K');
+    Prompt(#27 + '[0K');
 { Restore Renegade normal colors for anything after this }
 { stripped for remote ANSI safety }
     Prompt(Chr(19)+Chr(7));
@@ -1101,59 +1087,58 @@ PROCEDURE DrawRow(I2: Byte; Hilite: Boolean);
     LRest: AStr;
   BEGIN
     { Fixed visible width: 79 columns in the message list area.
-      We avoid painting the highlight over columns 1-2 (the status flag area)
-      to reduce ANSI client "smear" issues. }
+      Highlighted lines keep the original lightbar style for all columns. }
 
     IF (I2 < 1) OR (I2 > Count) THEN
       Exit;
 
     { Hard-clear the entire line to black before repainting }
     ANSIG(1, LineY[I2]);
-    Prompt(#27'[0m');
-    Prompt(#27'[37;40m');
-    Prompt(#27'[0K');
+    Prompt(#27 + '[0m');
+    Prompt(#27 + '[37;40m');
+    Prompt(#27 + '[0K');
 { stripped ClrEol for remote safety }
 
     IF Hilite THEN
     BEGIN
-    Prompt(#27'[0m');
-    Prompt(#27'[1;37;44m'); { bright white on blue }
+      { Highlighted line: keep the original lightbar style (white on blue) }
+      Prompt(#27 + '[0m');
+      Prompt(#27 + '[1;37;44m'); { bright white on blue }
+
       BuildPlainLine(MsgList[I2], P);
       P := CutVis(P, 79);
       PadVis(P, 79);
 
-      { Cols 1-2 normal (status), cols 3-79 highlighted }
       ANSIG(1, LineY[I2]);
-{ stripped for remote ANSI safety }
-      { TextBackground removed for remote ANSI safety }
-      { TextColor removed for remote ANSI safety }
-      P2 := Copy(P, 1, 2);
-      IF Length(P2) < 2 THEN P2 := P2 + '  ';
-      Prompt(P2);
-
-      ANSIG(3, LineY[I2]);
-{ stripped for remote ANSI safety }
-      { TextBackground removed for remote ANSI safety }
-      { TextColor removed for remote ANSI safety }
-      P2 := Copy(P, 3, 77);
-      IF Length(P2) < 77 THEN
-        P2 := P2 + Copy('                                                                             ', 1, 77 - Length(P2));
-      Prompt(P2);
+      Prompt(P);
     END
     ELSE
     BEGIN
-      { Normal line: keep color codes, but start painting at col 3 }
+      { Normal line: status flag (col 1) light red only when NOT highlighted }
       BuildPlainLine(MsgList[I2], P);
       BuildColorLine(MsgList[I2], L);
       P := CutVis(P, 79);
       PadVis(P, 79);
 
       ANSIG(1, LineY[I2]);
-{ stripped for remote ANSI safety }
-      { TextBackground removed for remote ANSI safety }
-      { TextColor removed for remote ANSI safety }
-      Prompt(Copy(P, 1, 2));
 
+      IF (Length(P) >= 1) AND (P[1] IN ['D','U','>','*']) THEN
+      BEGIN
+        Prompt(#27 + '[1;31;40m'); { light red on black }
+        Prompt(P[1]);
+        Prompt(#27 + '[0m');
+        Prompt(#27 + '[37;40m');   { restore normal }
+      END
+      ELSE
+        Prompt(Copy(P, 1, 1));
+
+      { print col 2 (space) in normal color }
+      IF (Length(P) >= 2) THEN
+        Prompt(Copy(P, 2, 1))
+      ELSE
+        Prompt(' ');
+
+      { Rest of the line from col 3 keeps existing color codes }
       ANSIG(3, LineY[I2]);
       LRest := SkipVis(L, 2);
       LRest := CutVis(LRest, 77);
@@ -1162,9 +1147,9 @@ PROCEDURE DrawRow(I2: Byte; Hilite: Boolean);
     END;
 
     { Ensure the remainder of the line is black }
-    Prompt(#27'[0m');
-    Prompt(#27'[37;40m');
-    Prompt(#27'[K');
+    Prompt(#27 + '[0m');
+    Prompt(#27 + '[37;40m');
+    Prompt(#27 + '[K');
 { stripped for remote ANSI safety }
       { TextBackground removed for remote ANSI safety }
       { TextColor removed for remote ANSI safety }
@@ -1182,14 +1167,14 @@ BEGIN
   S := '';
   { reduce remote flicker } 
   IF (ComPortSpeed > 0) THEN
-    Prompt(#27'[?25l');
+    Prompt(#27 + '[?25l');
 
   IF (HiMsg < 1) THEN
   BEGIN
     NL;
     Print('No messages to list.');
     IF (ComPortSpeed > 0) THEN
-    Prompt(#27'[?25h');
+    Prompt(#27 + '[?25h');
     Exit;
   END;
 
@@ -1212,7 +1197,7 @@ BEGIN
         JumpMode := FALSE;
         S := '';
         ANSIG(1, Hi(WindMax)-1);
-        Prompt(#27'[0K');
+        Prompt(#27 + '[0K');
         lRGLngStr(288, FALSE);
         Continue;
       END;
@@ -1231,7 +1216,7 @@ BEGIN
         JumpMode := FALSE;
         S := '';
         ANSIG(1, Hi(WindMax)-1);
-        Prompt(#27'[0K');
+        Prompt(#27 + '[0K');
         lRGLngStr(288, FALSE);
         Continue;
       END;
@@ -1241,7 +1226,7 @@ BEGIN
         IF (Length(S) > 0) THEN
           Delete(S, Length(S), 1);
         ANSIG(1, Hi(WindMax)-1);
-        Prompt(#27'[0m'); Prompt(#27'[1;34;40m'); Prompt(#27'[0K');
+        Prompt(#27 + '[0m'); Prompt(#27 + '[1;34;40m'); Prompt(#27 + '[0K');
         Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
         Prompt(S);
         Continue;
@@ -1252,7 +1237,7 @@ BEGIN
         IF (Length(S) < 5) THEN
           S := S + Chr(W);
         ANSIG(1, Hi(WindMax)-1);
-        Prompt(#27'[0m'); Prompt(#27'[1;34;40m'); Prompt(#27'[0K');
+        Prompt(#27 + '[0m'); Prompt(#27 + '[1;34;40m'); Prompt(#27 + '[0K');
         Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
         Prompt(S);
         Continue;
@@ -1306,9 +1291,9 @@ BEGIN
         JumpMode := TRUE;
         S := '';
         ANSIG(1, Hi(WindMax)-1);
-        Prompt(#27'[0m');
-         Prompt(#27'[1;34;40m');
-         Prompt(#27'[0K');
+        Prompt(#27 + '[0m');
+         Prompt(#27 + '[1;34;40m');
+         Prompt(#27 + '[0K');
          Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
         Continue;
       END;
@@ -1319,9 +1304,9 @@ BEGIN
         JumpMode := TRUE;
         S := C;
         ANSIG(1, Hi(WindMax)-1);
-        Prompt(#27'[0m');
-         Prompt(#27'[1;34;40m');
-         Prompt(#27'[0K');
+        Prompt(#27 + '[0m');
+         Prompt(#27 + '[1;34;40m');
+         Prompt(#27 + '[0K');
          Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
         Prompt(S);
         Continue;
@@ -1354,9 +1339,9 @@ BEGIN
           END;
 
           ANSIG(1, Hi(WindMax)-1);
-          Prompt(#27'[0m');
-         Prompt(#27'[1;34;40m');
-         Prompt(#27'[0K');
+          Prompt(#27 + '[0m');
+         Prompt(#27 + '[1;34;40m');
+         Prompt(#27 + '[0K');
          Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
           Prompt(S);
           Continue;
@@ -1367,9 +1352,9 @@ BEGIN
         BEGIN
           S := S + C;
           ANSIG(1, Hi(WindMax)-1);
-          Prompt(#27'[0m');
-         Prompt(#27'[1;34;40m');
-         Prompt(#27'[0K');
+          Prompt(#27 + '[0m');
+         Prompt(#27 + '[1;34;40m');
+         Prompt(#27 + '[0K');
          Prompt('|09Select Message |09[|14%CM-|14%HM|09] (|14Q|09=|14Quit|09): ');
           Prompt(S);
           Continue;
@@ -1421,7 +1406,7 @@ BEGIN
       MsgNum := MsgList[CurIdx];
         { eat any key repeats so ReadMsg does not auto-advance }
       IF (ComPortSpeed > 0) THEN
-    Prompt(#27'[?25h');
+    Prompt(#27 + '[?25h');
       Exit;
     END;
 
@@ -1475,7 +1460,7 @@ BEGIN
 
   { ensure cursor is visible on exit }
   IF (ComPortSpeed > 0) THEN
-    Prompt(#27'[?25h');
+    Prompt(#27 + '[?25h');
 END;
 
 PROCEDURE MainRead(OncOnly,AskUpdate,Pub: Boolean);
