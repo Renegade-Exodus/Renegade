@@ -13,7 +13,7 @@ PROCEDURE DumpNode;
 PROCEDURE ListNodes;
 PROCEDURE MessageNode(CONST b: ASTR);
 PROCEDURE PageNode;
-PROCEDURE TeleConfCheck; {LeeW: Moved from COMMON}
+PROCEDURE TeleConfCheck;
 PROCEDURE TeleConference;
 PROCEDURE ToggleChatAvailability;
 
@@ -25,6 +25,42 @@ USES
   Script,
   ShortMsg,
   TimeFunc;
+
+FUNCTION IntToStr(N: LongInt): STRING;
+VAR
+  S: STRING;
+BEGIN
+  Str(N, S);
+  IntToStr := S;
+END;
+
+FUNCTION TC_CapsThis(S: STRING): STRING;
+VAR
+  I: Integer;
+  UpNext: Boolean;
+  C: Char;
+BEGIN
+  UpNext := TRUE;
+  FOR I := 1 TO Length(S) DO
+  BEGIN
+    C := S[I];
+    {lowercase A-Z}
+    IF (C >= 'A') AND (C <= 'Z') THEN
+      S[I] := Chr(Ord(C) + 32);
+    {uppercase first letter of each word}
+    IF UpNext THEN
+    BEGIN
+      C := S[I];
+      IF (C >= 'a') AND (C <= 'z') THEN
+        S[I] := Chr(Ord(C) - 32);
+    END;
+    C := S[I];
+    {next word after non-alphanum}
+    UpNext := NOT (((C >= 'a') AND (C <= 'z')) OR ((C >= 'A') AND (C <= 'Z')) OR ((C >= '0') AND (C <= '9')));
+  END;
+  TC_CapsThis := S;
+END;
+
 
 VAR
   TeleConfInputLine: STRING;   {Current line being typed in TeleConference InputMain}
@@ -70,13 +106,78 @@ BEGIN
 END;
 
 PROCEDURE TC_SendAnsiStr(CONST A: STRING);
+VAR
+  T: AStr;
 BEGIN
-  {Send raw ANSI only to the remote user.  Local console uses direct screen writes and would show the tail 'r'.}
-  IF (OkANSI) AND (ComPortSpeed>0) THEN
-    SerialOut(A);
+  {Send raw ANSI only to the remote user.  Local console uses direct screen writes.}
+  IF (OkANSI) AND (ComPortSpeed > 0) THEN
+  BEGIN
+    T := A;
+    SerialOut(T);
+  END;
 END;
 
 
+
+
+{ ===== Remote Chat Buffer + Redraw (fTelnet-safe) ===== }
+
+CONST
+  TC_REMOTE_MAX = 16;  {rows 6..21}
+
+VAR
+  TC_RemoteBuf : ARRAY[1..TC_REMOTE_MAX] OF STRING;
+  TC_RemoteCnt : Byte;
+
+PROCEDURE TC_RemoteInit;
+VAR
+  i: Byte;
+BEGIN
+  TC_RemoteCnt := 0;
+  FOR i := 1 TO TC_REMOTE_MAX DO
+    TC_RemoteBuf[i] := '';
+END;
+
+PROCEDURE TC_RemoteAddLine(CONST L: STRING);
+VAR
+  i: Byte;
+BEGIN
+  IF TC_RemoteCnt < TC_REMOTE_MAX THEN
+  BEGIN
+    Inc(TC_RemoteCnt);
+    TC_RemoteBuf[TC_RemoteCnt] := L;
+  END
+  ELSE
+  BEGIN
+    FOR i := 1 TO TC_REMOTE_MAX-1 DO
+      TC_RemoteBuf[i] := TC_RemoteBuf[i+1];
+    TC_RemoteBuf[TC_REMOTE_MAX] := L;
+  END;
+END;
+
+PROCEDURE TC_RemoteRedraw;
+VAR
+  i, row: Byte;
+BEGIN
+  IF NOT ((OkANSI) AND (ComPortSpeed > 0)) THEN
+    Exit;
+
+    {Draw buffered lines bottom-aligned so chat grows upward}
+  IF TC_RemoteCnt < TC_REMOTE_MAX THEN
+    row := TC_CHAT_BOTTOM - TC_RemoteCnt + 1
+  ELSE
+    row := TC_CHAT_TOP_DEFAULT;
+FOR i := 1 TO TC_REMOTE_MAX DO
+  BEGIN
+    TC_SendAnsiStr(#27+'['+IntToStr(row)+';1H');
+    TC_SendAnsiStr(#27+'[0m'+#27+'[37;40m'+#27+'[2K');
+    IF (i <= TC_RemoteCnt) AND (TC_RemoteBuf[i] <> '') THEN
+      TC_SendAnsiStr(TC_RemoteBuf[i]);
+    Inc(row);
+  END;
+END;
+
+{ ===== End Remote Chat Buffer ===== }
 
 PROCEDURE TC_GotoXY(X, Y: Byte);
 BEGIN
@@ -84,7 +185,7 @@ BEGIN
   GotoXY(X, Y);
   {Move remote cursor via ANSI (do NOT rely on ANSIG which is mostly remote-only - Exo)}
   IF (OkANSI) AND (ComPortSpeed > 0) THEN
-    SerialOut(#27+'['+IntToStr(Y)+';'+IntToStr(X)+'H');
+    TC_SendAnsiStr(#27+'['+IntToStr(Y)+';'+IntToStr(X)+'H');
 END;
 
 PROCEDURE TC_SetDefaultAttr;
@@ -144,16 +245,63 @@ BEGIN
   TC_PipeToAnsi := outS;
 END;
 
+FUNCTION TC_StripAnsi(CONST S: STRING): STRING;
+{Removes ANSI ESC[... sequences so local console doesn't show raw codes -Exo}
+VAR
+  i, j: Integer;
+  outS: STRING;
+BEGIN
+  outS := '';
+  i := 1;
+  WHILE i <= Length(S) DO
+  BEGIN
+    IF (S[i] = #27) THEN
+    BEGIN
+      {Skip ESC[ ... <final>}
+      Inc(i);
+      IF (i <= Length(S)) AND (S[i] = '[') THEN
+      BEGIN
+        Inc(i);
+        j := i;
+        WHILE (j <= Length(S)) AND NOT (S[j] IN ['A'..'Z','a'..'z']) DO Inc(j);
+        IF (j <= Length(S)) THEN
+          i := j + 1
+        ELSE
+          i := Length(S) + 1;
+      END
+      ELSE
+        Inc(i);
+    END
+    ELSE
+    BEGIN
+      outS := outS + S[i];
+      Inc(i);
+    END;
+  END;
+  TC_StripAnsi := outS;
+END;
+
+
 FUNCTION TC_NormalizeChatLine(s: STRING): STRING;
 VAR
   i, j: Integer;
   t: STRING;
 BEGIN
-  WHILE (Length(s) > 0) AND ((s[1] = #13) OR (s[1] = #10)) DO
-    Delete(s,1,1);
+  WHILE (Length(s) > 0) DO
+  BEGIN
+    IF (s[1] = #13) OR (s[1] = #10) THEN
+      Delete(s,1,1)
+    ELSE
+      Break;
+  END;
 
-  WHILE (Length(s) > 0) AND ((s[Length(s)] = #13) OR (s[Length(s)] = #10)) DO
-    Delete(s, Length(s), 1);
+  WHILE (Length(s) > 0) DO
+  BEGIN
+    IF (s[Length(s)] = #13) OR (s[Length(s)] = #10) THEN
+      Delete(s, Length(s), 1)
+    ELSE
+      Break;
+  END;
 
 
   t := '';
@@ -250,7 +398,9 @@ VAR
   SaveMCIAllowed: Boolean;
   SaveColor: Byte;
 BEGIN
-  SaveColor := CurrentColor;
+    {Ensure input bar is fully painted}
+  TC_ClearLine(TC_INPUT_ROW);
+SaveColor := CurrentColor;
   SaveMCIAllowed := MCIAllowed;
 
   {Remote: clear + redraw input line}
@@ -258,16 +408,25 @@ BEGIN
   BEGIN
     TC_SendAnsiStr(#27+'['+IntToStr(TC_INPUT_ROW)+';1H'+#27+'[2K');
     TC_SendAnsiStr(#27+'[0m'+#27+'[37;44m'); {white on blue for input bar}
-    SerialOut('> ' + TeleConfInputLine);
-    TC_SendAnsiStr(#27+'[0m'+#27+'[37;40m');
+    TC_SendAnsiStr('> ' + TeleConfInputLine);
+    {Position cursor after prompt + current input (keep '>' intact)}
+    TC_SendAnsiStr(#27+'['+IntToStr(TC_INPUT_ROW)+';'+IntToStr(3+Length(TeleConfInputLine))+'H');
   END;
 
   {Local: clear + redraw input line - Exo}
-  TC_LocalFullWindow;
-  SetC(15);
-  GotoXY(1, TC_INPUT_ROW);
-  ClrEol;
-  Write('> ', TeleConfInputLine);
+  BEGIN
+    {Draw a blue input bar locally (match remote)}
+    TC_LocalFullWindow;
+    GotoXY(1, TC_INPUT_ROW);
+    TextAttr := (1 * 16) + 15; {blue background, white text}
+    ClrEol;
+    Write('> ');
+  GotoXY(3, TC_INPUT_ROW);
+  Write(TeleConfInputLine);
+    {Position cursor after prompt + current input}
+    GotoXY(3 + Length(TeleConfInputLine), TC_INPUT_ROW);
+    TextAttr := (1 * 16) + 15; {keep white on blue while typing}
+  END;
 
   {Restore}
   SetC(SaveColor);
@@ -278,53 +437,78 @@ END;
 
 PROCEDURE TC_PrintChatLine(CONST S: STRING);
 VAR
+  PlainLine: STRING;
+  NamePart: STRING;
+  MsgPart: STRING;
+  j, k: Integer;
   SaveMCIAllowed: Boolean;
   SaveColor: Byte;
+  RemoteLine: STRING;
   LocalLine: STRING;
 BEGIN
   SaveColor := CurrentColor;
   SaveMCIAllowed := MCIAllowed;
 
-    LocalLine := TC_NormalizeChatLine(TC_PipeToAnsi(S));
-  {Remote safety: remove any embedded CR/LF that would cause double-spacing}
-  WHILE Pos(#13, LocalLine) > 0 DO Delete(LocalLine, Pos(#13, LocalLine), 1);
-  WHILE Pos(#10, LocalLine) > 0 DO Delete(LocalLine, Pos(#10, LocalLine), 1);
+  {Local uses Renegade color engine (|xx etc), remote needs stripped ANSI-safe text}
+  LocalLine  := TC_NormalizeChatLine(S);
+  RemoteLine := TC_NormalizeChatLine(TC_PipeToAnsi(S));
 
-  IF (OkANSI) AND (ComPortSpeed > 0) THEN
+  {Force [Name]: colors to match local: cyan brackets, light cyan name}
+  PlainLine := TC_NormalizeChatLine(S);
+  IF (Length(PlainLine) > 0) AND (PlainLine[1] = '[') THEN
   BEGIN
-    {Re-apply scroll region (status refresh can reset it)}
-    TC_ApplyScrollRegion;
+    j := Pos(']', PlainLine);
+    k := Pos(']:', PlainLine);
+    IF (j > 2) AND (k > j) THEN
+    BEGIN
+      NamePart := Copy(PlainLine, 2, j-2);
+      MsgPart := Copy(PlainLine, k+2, Length(PlainLine)-(k+1));
+      {trim leading space}
+      IF (Length(MsgPart) > 0) AND (MsgPart[1] = ' ') THEN
+        Delete(MsgPart, 1, 1);
 
-    {Save cursor so user can keep typing}
-    TC_SendAnsiStr(#27+'[s');
-
-    {Go to bottom of chat region (absolute coords) and print with safe colors}
-    TC_SendAnsiStr(#27+'['+IntToStr(TC_CHAT_BOTTOM)+';1H');
-    TC_SendAnsiStr(#27+'[0m'+#27+'[37;40m'+#27+'[2K'); {clear line}
-    SerialOut(LocalLine);
-    {Many telnet clients already map CR -> CRLF; sending CRLF can double-space}
-    SerialOut(#13);
-    TC_SendAnsiStr(#27+'[u');
+      RemoteLine := #27+'[0;36;40m'+'[' +
+                    #27+'[1;36;40m'+NamePart +
+                    #27+'[0;36;40m'+']:'+' ' +
+                    #27+'[0;37;40m' + TC_PipeToAnsi(MsgPart);
+    END;
   END;
 
 
-  { --- Local SysOp console --- -Exo}
-  MCIAllowed := FALSE;
-  TC_LocalChatWindowOn;
-  GotoXY(1, TC_LocalBottomY);
-  SetC(7);
-  Print(LocalLine);
-  TC_LocalFullWindow;
+    {Remote safety: remove any embedded CR/LF that would cause double-spacing}
+  WHILE Pos(#13, RemoteLine) > 0 DO Delete(RemoteLine, Pos(#13, RemoteLine), 1);
+  WHILE Pos(#10, RemoteLine) > 0 DO Delete(RemoteLine, Pos(#10, RemoteLine), 1);
 
-  {Restore -Exo}
+  IF (OkANSI) AND (ComPortSpeed > 0) THEN
+  BEGIN
+    TC_RemoteAddLine(RemoteLine);
+    TC_RemoteRedraw;
+    TC_RedrawInput;
+  END
+  ELSE
+  BEGIN
+    {Local console: scroll within the chat window using CRT windowing}
+    Window(1, TC_CHAT_TOP_DEFAULT, 80, TC_CHAT_BOTTOM);
+    GotoXY(1, TC_CHAT_BOTTOM - TC_CHAT_TOP_DEFAULT + 1);
+    {Scroll up by one line}
+    WriteLn;
+    GotoXY(1, TC_CHAT_BOTTOM - TC_CHAT_TOP_DEFAULT + 1);
+    TextAttr := 7;
+    ClrEol;
+    {Print line with Renegade colors}
+    Window(1, 1, 80, 25);
+    MCIAllowed := FALSE;
+    SetC(7);
+    GotoXY(1, TC_CHAT_BOTTOM);
+    ClrEol;
+    Print(LocalLine);
+    Window(1, 1, 80, 25);
+  END;
+
+  {Restore}
   MCIAllowed := SaveMCIAllowed;
-  TC_SetDefaultAttr;
   SetC(SaveColor);
-
-  {Repaint input line so the user can keep typing -Exo}
-  TC_RedrawInput;
 END;
-
 
 
 PROCEDURE TC_DrawUI;
@@ -337,7 +521,7 @@ BEGIN
   IF (TCChatTop > TC_CHAT_BOTTOM) THEN TCChatTop := 1;
 
   {Draw divider line locally + remotely at TC_DIV_ROW}
-  SetC(4);
+  SetC(1);
   TC_ClearLine(TC_DIV_ROW);
   TC_GotoXY(1, TC_DIV_ROW);
   Prompt(TC_RepeatChar(Char(#196), 80));
@@ -347,9 +531,56 @@ BEGIN
     TC_SetScrollRegion(TCChatTop, TC_CHAT_BOTTOM);
 
   TeleConfInputLine := '';
+
+  IF (OkANSI) AND (ComPortSpeed > 0) THEN
+    TC_RemoteInit;
+
   TC_RedrawInput;
 
   TC_LocalFullWindow;
+END;
+
+
+
+{------------------------------------------------------------}
+{ Full-screen command mode (for /? /L /U etc)                 }
+{ Prevents the teleconf scroll region + input bar from        }
+{ getting scrolled into command output.                       }
+{------------------------------------------------------------}
+PROCEDURE TC_CommandModeStart;
+BEGIN
+  {Remote: full screen scroll + normal colors}
+  IF (OkANSI) AND (ComPortSpeed > 0) THEN
+  BEGIN
+    TC_SendAnsiStr(#27+'[0m'+#27+'[37;40m');
+    TC_SendAnsiStr(#27+'[1;25r');   {disable custom scroll region}
+    TC_SendAnsiStr(#27+'[2J');      {clear screen}
+    TC_SendAnsiStr(#27+'[H');       {home}
+  END;
+
+  {Local: full screen + normal}
+  TC_LocalFullWindow;
+  TextAttr := 7;
+  ClrScr;
+
+  {Clear our UI rows so they can't bleed/scroll into command output}
+  TC_ClearLine(TC_DIV_ROW);
+  TC_ClearLine(TC_INPUT_ROW);
+  TC_ClearLine(TC_STATUS_ROW);
+  GotoXY(1,1);
+END;
+
+PROCEDURE TC_CommandModeEnd;
+BEGIN
+  {Rebuild teleconference UI (divider + scroll region + input bar)}
+  TC_DrawUI;
+
+  {Force cursor to column 3 immediately (avoid col 1 until keypress)}
+  IF (OkANSI) AND (ComPortSpeed > 0) THEN
+    TC_SendAnsiStr(#27+'['+IntToStr(TC_INPUT_ROW)+';3H');
+
+  TC_LocalFullWindow;
+  GotoXY(3, TC_INPUT_ROW);
 END;
 
 
@@ -499,7 +730,7 @@ BEGIN
     ELSE
     BEGIN
       FOR Counter := 1 TO (LennMCI(MLC) + 5) DO
-        BackSpace;
+           IF (NOT TeleConfActive) THEN BackSpace;
     END;
 Assign(f,General.TempPath+'MSG'+IntToStr(ThisNode)+'.TMP');
     Reset(f,1);
@@ -547,7 +778,9 @@ VAR
   SaveTimeOut,
   SaveTimeOutBell: INTEGER;
   Done,
-  ChannelOnly: BOOLEAN;
+  ChannelOnly,
+  CmdMode: BOOLEAN;
+  RestoreHeaderPending: BOOLEAN;
 
   FUNCTION ActionMCI(s: ASTR): STRING;
   VAR
@@ -778,50 +1011,48 @@ VAR
     NL;
   END;
 
-  PROCEDURE ShowRoom(Chan: INTEGER);
+    PROCEDURE ShowRoom(Chan: INTEGER);
   VAR
     People: WORD;
-    i: WORD;
+    i, j: WORD;
   BEGIN
     LoadRoom(Chan);
-    IF (NOT Room.Occupied) THEN
-      Exit;
+
+    {Count users in this channel (including yourself). If nobody is here, show nothing.}
     People := 0;
     FOR i := 1 TO MaxNodes DO
     BEGIN
-      IF (i = ThisNode) THEN
-        Continue;
       LoadNode(i);
       IF (NodeR.Room = Chan) AND (NodeR.GroupChat) THEN
-        Inc(People);
+        IF (CoSysOp) OR (NOT (NInvisible IN NodeR.Status)) THEN
+          Inc(People);
     END;
-    IF (People <> 0) THEN
+
+    IF (People = 0) THEN
+      Exit;
+
+    NL;
+    PrintACR('^0Users in channel #'+IntToStr(Chan)+':');
+    PrintACR('^3'+PadRightStr('Username',30)+' '+PadRightStr('Node',7)+'Moderator');
+    PrintACR('^3'+TC_RepeatChar('-',50));
+    IF (Room.Moderator >= 0) THEN
     BEGIN
-      NL;
-      IF (Room.Moderator >= 0) THEN
-        LoadURec(User,Room.Moderator)
-      ELSE
-        User.Name := 'Nobody';
-      PrintACR('^9Conference Room: ^1'+PadLeftInt(Chan,5)+' ^9Moderator: ^1'+Caps(User.Name));
-      PrintACR('^9Type: ^1'+PadLeftStr(AOnOff(Room.Private,'Private','Public'),17)+'^9Topic: ^1'+Room.Topic);
-      IF (Room.Anonymous) THEN
-      BEGIN
-        NL;
-        PrintACR('This room is in anonymous mode.');
-      END;
-      NL;
-      j := 1;
-      WHILE (J <= MaxNodes) AND (NOT Abort) DO
-      BEGIN
-        LoadNode(j);
-        IF (NodeR.GroupChat) AND (NodeR.Room = Chan) THEN
-          IF NOT (NInvisible IN NodeR.Status) OR (CoSysOp) THEN
-            PrintACR('^0'+Caps(NodeR.UserName)+' on node '+IntToStr(j));
-        Inc(j);
-      END;
-      NL;
+      LoadURec(User, Room.Moderator);
+      PrintACR('^1'+PadRightStr(TC_CapsThis(User.Name), 30)+'      '+PadRightStr('',7)+'YES');
     END;
+    FOR j := 1 TO MaxNodes DO
+    BEGIN
+      LoadNode(j);
+      IF (NodeR.Room = Chan) AND (NodeR.GroupChat) THEN
+        IF (CoSysOp) OR (NOT (NInvisible IN NodeR.Status)) THEN
+        BEGIN
+          LoadURec(User, NodeR.User);
+          PrintACR('^1'+PadRightStr(TC_CapsThis(User.Name),30)+' '+PadRightStr(IntToStr(j),7));
+        END;
+    END;
+    NL;
   END;
+
 
   PROCEDURE InputMain(VAR s: STRING);
   VAR
@@ -896,7 +1127,7 @@ VAR
         END;
         IF (NOT WasColor) THEN
         BEGIN
-          BackSpace;
+           IF (NOT TeleConfActive) THEN BackSpace;
           IF (trapping) THEN
             Write(TrapFile,^H' '^H);
         END;
@@ -956,7 +1187,7 @@ VAR
              BEGIN
                s[cp] := c;
                Inc(cp);
-               outkey(c);
+               IF (NOT TeleConfActive) THEN outkey(c);
                IF (trapping) THEN
                  Write(TrapFile,c);
              END;
@@ -979,7 +1210,7 @@ VAR
                 END;
                 IF NOT (c IN ['0'..'9']) THEN
                 BEGIN
-                  outkey(c);
+                  IF (NOT TeleConfActive) THEN outkey(c);
                   IF (trapping) THEN
                     Write(TrapFile,c);
                   cs := cs + c;  {here was buf}
@@ -991,7 +1222,7 @@ VAR
               BEGIN
                 s[cp] := c;
                 Inc(cp);
-                outkey(c);
+                IF (NOT TeleConfActive) THEN outkey(c);
                 IF (trapping) THEN
                   Write(TrapFile,c);
               END;
@@ -1001,8 +1232,9 @@ VAR
                  SetC(origcolor);
                END;
       END;
-      TeleConfInputLine := s;
       s[0] := Chr(cp - 1);
+      TeleConfInputLine := s;
+      IF (TeleConfActive) THEN TC_RedrawInput;
     until ((c = ^M) OR (c = ^N) OR (HangUp));
     mlc := '';
   END;
@@ -1056,6 +1288,7 @@ BEGIN
 
   TeleConfActive := TRUE;
   TeleConfInputLine := '';
+  RestoreHeaderPending := FALSE;
   TCChatTop := 1;
   TC_InitUI;
 
@@ -1088,8 +1321,43 @@ BEGIN
     {Status line updates may reset the ANSI scroll region; restore it}
     TC_ApplyScrollRegion;
     TC_RedrawInput;
-    TC_GotoXY(1,TC_INPUT_ROW);
+    TC_GotoXY(3,TC_INPUT_ROW);
     InputMain(s);
+    {If we just ran a /command, restore the TELECONF header once the user presses Enter or sends a chat line}
+    IF (RestoreHeaderPending) THEN
+    BEGIN
+      {After /? /L /U etc, restore the normal TELECONF screen on next Enter or next real chat line}
+      IF (s = '') OR ((s <> '') AND (s[1] <> '/')) THEN
+      BEGIN
+        {Reset colors BEFORE clearing so we don't fill the whole screen blue}
+        IF (OkANSI) AND (ComPortSpeed > 0) THEN
+          TC_SendAnsiStr(#27+'[0m'+#27+'[37;40m'+#27+'[2J'+#27+'[H')
+        ELSE
+        BEGIN
+          TC_LocalFullWindow;
+          TextAttr := 7;
+          ClrScr;
+        END;
+
+        {Re-print TELECONF header + room info exactly like first entry}
+        SysOpLog('Returned to Teleconferencing');
+        PrintF('TELECONF');
+        IF (NoFile) THEN
+          Print('^1  Welcome to Teleconferencing.  Type ^1/?^1 for help or ^1/Q^1 to quit.');
+        AddToRoom(RoomNumber);
+        NL;
+
+        {Rebuild scroll region + divider + input bar}
+        TCChatTop := TC_CHAT_TOP_DEFAULT;
+        IF (TCChatTop < 1) THEN TCChatTop := 1;
+        IF (TCChatTop > TC_CHAT_BOTTOM) THEN TCChatTop := 1;
+        TC_DrawUI;
+
+        TeleConfInputLine := '';
+        TC_RedrawInput;
+        RestoreHeaderPending := FALSE;
+      END;
+    END;
     ChannelOnly := FALSE;
     MultiNodeChat := FALSE;
     IF (HangUp) THEN
@@ -1124,6 +1392,8 @@ BEGIN
       END;
     IF (NOT Done) AND (s <> '') AND (s[1] = '/') THEN
     BEGIN
+      CmdMode := TRUE;
+      TC_CommandModeStart;
       Cmd := UpCase(s[2]);
       s3 := AllCaps(Copy(s,2,255));
       IF (Pos(' ',s3) > 0) THEN
@@ -1198,8 +1468,8 @@ BEGIN
 
       IF (s <> '') THEN
         CASE Cmd OF
-          '/' : IF (Copy(s,2,3) = '/\\') AND (SysOp) THEN
-                  DoMenuCommand(Done,AllCaps(Copy(S,5,2)),AllCaps(Copy(s,7,255)),s2,'Activating SysOp Cmd');
+          {'/' : IF (Copy(s,2,3) = '/\\') AND (SysOp) THEN
+                  DoMenuCommand(Done,AllCaps(Copy(S,5,2)),AllCaps(Copy(s,7,255)),s2,'Activating SysOp Cmd');}
 
           'A' : IF (AllCaps(Copy(s,2,4)) <> 'ANON') THEN
                 BEGIN
@@ -1390,7 +1660,11 @@ BEGIN
           'L' : IF (Copy(S,3,(Length(S) - 2)) <> '') THEN
                   Nope(NotValid)
                 ELSE
+				BEGIN
                   PrintF('ACTIONS');
+				  Print('%PAf%CL|00');
+				  RestoreHeaderPending := TRUE;
+				END;
 
           'M' : IF (S[3] <> ' ') OR (Copy(S,4,(Length(s) - 3)) = '') THEN
                   Nope(NotValid)
@@ -1431,6 +1705,7 @@ BEGIN
                   i := Name2Number(s,SaveName);
                   IF (i > 0) AND (i <= MaxNodes) THEN
                   BEGIN
+				  Print('%CL|00');
                     LoadNode(i);
                     IF ((ThisNode MOD 8) IN NodeR.Forget[ThisNode DIV 8]) THEN
                       Print('^9That user has forgotten you.'^M^J)
@@ -1487,6 +1762,7 @@ BEGIN
                   Nope(NotValid)
                 ELSE
                 BEGIN
+                  Print('%CL|00');
                   Abort := FALSE;
                   i := 1;
                   WHILE (i <= 255) AND (NOT Abort) DO
@@ -1494,6 +1770,8 @@ BEGIN
                     ShowRoom(i);
                     Inc(i);
                   END;
+                  PauseScr(FALSE);
+                  Print('%CL|00');
                   LoadRoom(RoomNumber);
                   s := '';
                 END;
@@ -1502,25 +1780,41 @@ BEGIN
                   Nope(NotValid)
                 ELSE
                 BEGIN
-                  ShowRoom(RoomNumber);
+                  Print('%CL|00');
+				  ShowRoom(RoomNumber);
                   s := '';
                 END;
 
           'W' : IF (Copy(S,3,(Length(s) - 2)) <> '') THEN
                   Nope(NotValid)
                 ELSE
+		BEGIN
                   ListNodes;
+		  Print('%CL|00');
+		  RestoreHeaderPending := TRUE;
+                END;
 
           '?' : IF (Copy(S,3,(Length(s) - 2)) <> '') THEN
                   Nope(NotValid)
                 ELSE
-                  PrintF('TELEHELP');
+                BEGIN
+					Print('%CL|00');
+					PrintF('TELEHELP');
+					PauseScr(FALSE);
+					Print('%CL|00');
+				END;
         END;
-    IF (s[1] = '/') THEN
+      {Return to teleconference UI}
+      CmdMode := FALSE;
+      RestoreHeaderPending := TRUE;
+      TC_DrawUI;
+      TC_LocalFullWindow;
+      GotoXY(3, TC_INPUT_ROW);
+IF (s[1] = '/') THEN
       s := '';
   END
   ELSE
-    IF (s > #0) THEN
+    IF (s <> '') THEN
       BEGIN
         LoadRoom(RoomNumber);
         IF (s[1] <> '`') THEN
