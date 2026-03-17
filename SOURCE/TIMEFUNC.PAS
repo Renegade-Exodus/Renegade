@@ -1,9 +1,5 @@
 {$A+,B-,D-,E-,F+,I-,L-,N-,O+,R-,S+,V-}
 
-{
- - Added DaysBetween FUNC, returned string, changed to int
-}
-
 UNIT TimeFunc; { Date & Time Functions }
 
 INTERFACE
