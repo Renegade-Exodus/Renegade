@@ -55,7 +55,7 @@ END;
 
 BEGIN
   ClrScr;
-  WriteLn('Renegade Version Update Utility Version 1.35/DOS');
+  WriteLn('Renegade Version Update Utility Version 1.40/DOS');
   WriteLn;
   Writeln('This utility will upgrade the Renegade Data Files.');
   WriteLn;
@@ -63,7 +63,7 @@ BEGIN
   BEGIN
 {    Write('Please enter the new version: ');}
 {    Local_Input1(VerStr,20,TRUE);}
-    VerStr := '1.35/DOS';
+    VerStr := '1.40/DOS';
 {    IF (VerStr = '') THEN
       WriteLn(^G^G^G'Aborted!')
     ELSE
