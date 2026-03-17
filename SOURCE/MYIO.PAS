@@ -1,7 +1,4 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R+,S-,V-}
-{
- 04/18/2022 - gutted this, some parts moved to common2
-}
 
 UNIT MyIO;
 

@@ -1,13 +1,5 @@
-{
-LeeW: search for ** to find proposed changes to data files
-TODO: add user flag to force password change next logon
-10/07/2021 - Updated names of user flags so they're intuitive; ARFlags, ACFlags, S(tatus)Flags
-12/02/2021 - Combined GeneralRec lightbar booleans, all lightbars either on or off now
-03/13/2022 - Combined user statusflags msg & file lightbars into 1 - lightbars
-02/20/2023 - Moved OneLiners record info here from ONELINERS.PAS
-}
 CONST
-  Build = '1.35';
+  Build = '1.40';
 
 {$IFDEF MSDOS}
   OS = '/DOS';
@@ -26,7 +18,7 @@ CONST
   MaxEvents = 10;
   MaxArcs = 8;
   MaxCmds = 200;
-  MaxMenus = 200; { LeeW: Increased from 100 }
+  MaxMenus = 200;
   MaxResultCodes = 20;
   MaxExtDesc = 99;
   MaxFileAreas = 32767;

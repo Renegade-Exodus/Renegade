@@ -1,11 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
 
-{
-why does downloads show blank entries but users not???
-added hmt files
-04/15/2022 added check for download top files prompt
-}
-
 UNIT STATS;
 
 INTERFACE

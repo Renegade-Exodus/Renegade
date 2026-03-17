@@ -1,11 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
- 07/31/2022 - Removed inputfield from sysoppw prompt
-Added: Disabled forgotpw question for CoSysOp+
-Added: Won't prompt for SysOpPW if blank
-        or phonepw if blank or toggle disabled
-        or bdaycheck if = -1869054590 or toggle disabled
-}
+
 UNIT Logon;
 
 INTERFACE

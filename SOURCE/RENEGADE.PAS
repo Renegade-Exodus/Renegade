@@ -28,10 +28,6 @@
 {$V-} { Variable string length allowed }
 {$X+} { Allow extended syntax }
 
-{
- 02/24/2022 - Exodus added command line parameter help
-}
-
 PROGRAM Renegade;
 
 USES

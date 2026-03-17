@@ -1,5 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{AR/ACFlags naming update}
+
 UNIT ShortMsg;
 
 INTERFACE

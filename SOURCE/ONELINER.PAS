@@ -1,28 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
-Lee Woodridge
- 09/29/2021 - Moved ToLower func to common, likely useful elsewhere
-            - Indented, formatting, cleanup
-            - oneliner_view now ONLY views, oneliner_add now ONLY adds
-            - renamed ONELE to ONELT to keep with standard format
-            - most strings added to RGLNG
-            - OneLiner_Random prints a random oneliner, but I don't know how to make the func store it
- 10/08/2021 - Change SysOp to AACS(General.AnonPubRead) to see anonymous posters names
- 10/19/2021 - Added SysOpLog error message if ONELM.EXT is missing
- 04/15/2022 - Removed unused code (onrec)
-              Added toggle for newest on top/bottom
- 05/16/2022 - Fixed reading oneliner data file out of range
-            - Changed Counter var type from byte to integer (need negatives)
-            - removed unused var Counter2
- 03/06/2023 - deleted users have their attribution set as anonymous
- 07/08/2023 - Nested view/add into oneliners proc
-            - Added OneLiner Editor (MNUCMD 1E)
- 01/21/2024 - Reversed order of OneLiners in editor (Newest at top)
-            - Added SysOp log entry for editing OneLiner
 
- [NOTES]
- - Put anonymous and deleted strings in lang
-}
 UNIT OneLiner;
 
 INTERFACE

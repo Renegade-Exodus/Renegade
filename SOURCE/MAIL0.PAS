@@ -1,8 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
-Lee Woodridge
- 10/20/2021 - Message colors using pipe codes now instead of caret codes
-}
+
 UNIT Mail0;
 
 INTERFACE

@@ -1,12 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
-added a bunch of hangup checks, in an attempt to remove artifacts printed after hangup
-indented everything
- 11/20/2021 - Moved FindOnlyOnce from bulletin NESTED in LogonMaint since only place that calls it
- 04/15/2022 - Added checks for logonlastcallers, logononeliners, logonvoting
- 04/16/2022 - Implemented mandatory voting
-            - Voting prompts and message in language file now
-}
+
 UNIT Maint;
 
 INTERFACE

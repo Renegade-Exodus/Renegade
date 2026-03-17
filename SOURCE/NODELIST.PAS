@@ -13,11 +13,12 @@ FUNCTION GetNewAddr(DisplayStr: AStr; MaxLen: Byte; VAR Zone,Net,Node,Point: Wor
 PROCEDURE GetNetAddress(VAR SysOpName: AStr; VAR Zone,Net,Node,Point,Fee: Word; GetFee: Boolean);
 PROCEDURE ChangeFlags(VAR MsgHeader: MHeaderRec);
 FUNCTION NetMail_Attr(NetAttribute: NetAttribs): AStr;
+PROCEDURE BrowseNodeLists;
 
 IMPLEMENTATION
 
 USES
-  Mail0;
+  Mail0, Dos;
 
 TYPE
   CompProc = FUNCTION(VAR ALine,Desire; L: Char): Integer;
@@ -650,5 +651,2250 @@ BEGIN
   END;
   NL;
 END;
+
+
+
+FUNCTION FileExistsFN(FN: AStr): Boolean;
+VAR
+  F: File;
+BEGIN
+  Assign(F, FN);
+  {$I-} Reset(F); {$I+}
+  IF IOResult = 0 THEN
+  BEGIN
+    Close(F);
+    FileExistsFN := TRUE;
+  END
+  ELSE
+    FileExistsFN := FALSE;
+END;
+
+CONST
+  NLMaxZones     = 32;
+  NLMaxNetPages  = 64;
+  NLNetsPerPage  = 32;
+  NLMaxNodePages = 400;
+  NLNodesPerPage = 24;
+  NLMaxCfgItems  = 32;
+  NLViewRows     = 18;
+  NLSubBoxWidth  = 65;
+  NLSubBoxHeight = 15;
+  NLSubBoxRows   = 13;
+
+TYPE
+  NLS20 = STRING[20];
+  NLS40 = STRING[40];
+  NLS60 = STRING[60];
+  NLS79 = STRING[79];
+
+  PNLNodeRec = ^NLNodeRec;
+  NLNodeRec = RECORD
+    Number : Integer;
+    Addr   : NLS20;
+    Status : NLS20;
+    BBS    : NLS60;
+    City   : NLS40;
+    Sysop  : NLS40;
+    Phone  : NLS40;
+    Baud   : NLS20;
+  END;
+
+  NLNodePageRec = RECORD
+    Items : ARRAY[1..NLNodesPerPage] OF NLNodeRec;
+  END;
+  PNLNodePage = ^NLNodePageRec;
+
+  PNLNetRec = ^NLNetRec;
+  NLNetRec = RECORD
+    NetNum    : Integer;
+    Kind      : Char;
+    Name      : NLS60;
+    ZoneNum   : Integer;
+    NodeStart : LongInt;
+    NodeEnd   : LongInt;
+  END;
+
+  NLNetPageRec = RECORD
+    Items : ARRAY[1..NLNetsPerPage] OF NLNetRec;
+  END;
+  PNLNetPage = ^NLNetPageRec;
+
+  NLZoneRec = RECORD
+    ZoneNum  : Integer;
+    Name     : NLS60;
+    NetStart : Integer;
+    NetEnd   : Integer;
+  END;
+  PNLZoneRec = ^NLZoneRec;
+
+  NLCfgRec = RECORD
+    Name     : NLS60;
+    Mask     : NLS79;
+    Resolved : NLS79;
+  END;
+  PNLCfgRec = ^NLCfgRec;
+
+VAR
+  NLNodePages   : ARRAY[1..NLMaxNodePages] OF PNLNodePage;
+  NLNetPages    : ARRAY[1..NLMaxNetPages] OF PNLNetPage;
+  NLZones       : ARRAY[1..NLMaxZones] OF PNLZoneRec;
+  NLStartNodeIdx: LongInt;
+  NLNodeCount   : LongInt;
+  NLNetCount    : Integer;
+  NLZoneCount   : Integer;
+  NLSourceFile  : NLS79;
+  NLCfgItems    : ARRAY[1..NLMaxCfgItems] OF PNLCfgRec;
+  NLCfgCount    : Integer;
+  NLQuit        : Boolean;
+
+FUNCTION NLTrimS(S: STRING): STRING;
+BEGIN
+  WHILE (Length(S) > 0) AND (S[1] = ' ') DO
+    Delete(S, 1, 1);
+  WHILE (Length(S) > 0) AND (S[Length(S)] = ' ') DO
+    Delete(S, Length(S), 1);
+  NLTrimS := S;
+END;
+
+FUNCTION NLUpperS(S: STRING): STRING;
+VAR
+  I: Integer;
+BEGIN
+  FOR I := 1 TO Length(S) DO
+    S[I] := UpCase(S[I]);
+  NLUpperS := S;
+END;
+
+FUNCTION NLU2Sp(S: STRING): STRING;
+VAR
+  I: Integer;
+BEGIN
+  FOR I := 1 TO Length(S) DO
+    IF S[I] = '_' THEN
+      S[I] := ' ';
+  NLU2Sp := S;
+END;
+
+FUNCTION NLNextToken(VAR S: STRING): STRING;
+VAR
+  P: Integer;
+BEGIN
+  P := Pos(',', S);
+  IF P = 0 THEN
+  BEGIN
+    NLNextToken := S;
+    S := '';
+  END
+  ELSE
+  BEGIN
+    NLNextToken := Copy(S, 1, P - 1);
+    Delete(S, 1, P);
+  END;
+END;
+
+FUNCTION NLDirPartOnly(S: STRING): STRING;
+VAR
+  I: Integer;
+BEGIN
+  I := Length(S);
+  WHILE (I > 0) AND (S[I] <> '\') AND (S[I] <> '/') AND (S[I] <> ':') DO
+    Dec(I);
+  IF I > 0 THEN
+    NLDirPartOnly := Copy(S, 1, I)
+  ELSE
+    NLDirPartOnly := '';
+END;
+
+FUNCTION NLBaseNameOnly(S: STRING): STRING;
+VAR
+  I: Integer;
+BEGIN
+  I := Length(S);
+  WHILE (I > 0) AND (S[I] <> '\') AND (S[I] <> '/') AND (S[I] <> ':') DO
+    Dec(I);
+  NLBaseNameOnly := Copy(S, I + 1, 255);
+END;
+
+FUNCTION NLNameWithoutExt(S: STRING): STRING;
+VAR
+  P: Integer;
+BEGIN
+  P := Pos('.', S);
+  IF P = 0 THEN
+    NLNameWithoutExt := S
+  ELSE
+    NLNameWithoutExt := Copy(S, 1, P - 1);
+END;
+
+FUNCTION NLExtNum2(S: AStr): Integer;
+VAR
+  P, N, Code: Integer;
+  E: AStr;
+BEGIN
+  NLExtNum2 := -1;
+  P := Pos('.', S);
+  IF P = 0 THEN Exit;
+  E := Copy(S, P + 1, 3);
+  IF Length(E) <> 3 THEN Exit;
+  Val(E, N, Code);
+  IF Code <> 0 THEN Exit;
+  IF (N < 0) OR (N > 999) THEN Exit;
+  NLExtNum2 := N;
+END;
+
+FUNCTION ResolveLatestNodeList2(Mask: AStr): AStr;
+VAR
+  SR: SearchRec;
+  BestName, DirPart, FindMask, MatchBase: AStr;
+  BestExt, CurExt: Integer;
+BEGIN
+  ResolveLatestNodeList2 := '';
+
+  IF FileExistsFN(Mask) THEN
+  BEGIN
+    ResolveLatestNodeList2 := Mask;
+    Exit;
+  END;
+
+  DirPart := NLDirPartOnly(Mask);
+  MatchBase := NLUpperS(NLNameWithoutExt(NLBaseNameOnly(Mask)));
+  FindMask := Mask;
+  IF (Length(Mask) >= 4) AND
+     (Copy(NLUpperS(Mask), Length(Mask) - 3, 4) = '.###') THEN
+    FindMask := DirPart + MatchBase + '.*';
+
+  BestName := '';
+  BestExt := -1;
+  FindFirst(FindMask, AnyFile, SR);
+  WHILE DosError = 0 DO
+  BEGIN
+    CurExt := NLExtNum2(SR.Name);
+    IF (CurExt >= 0) AND
+       (NLUpperS(NLNameWithoutExt(SR.Name)) = MatchBase) THEN
+      IF CurExt > BestExt THEN
+      BEGIN
+        BestExt := CurExt;
+        BestName := SR.Name;
+      END;
+    FindNext(SR);
+  END;
+
+  IF BestName <> '' THEN
+    ResolveLatestNodeList2 := DirPart + BestName;
+END;
+
+PROCEDURE NLResetNodesOnly;
+VAR
+  I: Integer;
+BEGIN
+  FOR I := 1 TO NLMaxNodePages DO
+    IF NLNodePages[I] <> NIL THEN
+    BEGIN
+      Dispose(NLNodePages[I]);
+      NLNodePages[I] := NIL;
+    END;
+  NLNodeCount := 0;
+END;
+
+PROCEDURE NLResetData;
+VAR
+  I: Integer;
+BEGIN
+  NLResetNodesOnly;
+  NLNetCount := 0;
+  FOR I := 1 TO NLZoneCount DO
+    IF NLZones[I] <> NIL THEN
+    BEGIN
+      Dispose(NLZones[I]);
+      NLZones[I] := NIL;
+    END;
+  NLZoneCount := 0;
+END;
+
+PROCEDURE NLInitPages;
+VAR
+  I: Integer;
+BEGIN
+  FOR I := 1 TO NLMaxNodePages DO
+    NLNodePages[I] := NIL;
+  FOR I := 1 TO NLMaxNetPages DO
+    NLNetPages[I] := NIL;
+  FOR I := 1 TO NLMaxZones DO
+    NLZones[I] := NIL;
+END;
+
+PROCEDURE NLDonePages;
+VAR
+  I: Integer;
+BEGIN
+  FOR I := 1 TO NLMaxNodePages DO
+    IF NLNodePages[I] <> NIL THEN
+    BEGIN
+      Dispose(NLNodePages[I]);
+      NLNodePages[I] := NIL;
+    END;
+  FOR I := 1 TO NLMaxNetPages DO
+    IF NLNetPages[I] <> NIL THEN
+    BEGIN
+      Dispose(NLNetPages[I]);
+      NLNetPages[I] := NIL;
+    END;
+  FOR I := 1 TO NLZoneCount DO
+    IF NLZones[I] <> NIL THEN
+    BEGIN
+      Dispose(NLZones[I]);
+      NLZones[I] := NIL;
+    END;
+  NLZoneCount := 0;
+END;
+
+
+PROCEDURE NLDoneCfg;
+VAR
+  I: Integer;
+BEGIN
+  FOR I := 1 TO NLCfgCount DO
+    IF NLCfgItems[I] <> NIL THEN
+    BEGIN
+      Dispose(NLCfgItems[I]);
+      NLCfgItems[I] := NIL;
+    END;
+  NLCfgCount := 0;
+END;
+
+PROCEDURE NLEnsureNodePage(PageNo: Integer);
+BEGIN
+  IF (PageNo >= 1) AND (PageNo <= NLMaxNodePages) AND
+     (NLNodePages[PageNo] = NIL) THEN
+    New(NLNodePages[PageNo]);
+END;
+
+PROCEDURE NLEnsureNetPage(PageNo: Integer);
+BEGIN
+  IF (PageNo >= 1) AND (PageNo <= NLMaxNetPages) AND
+     (NLNetPages[PageNo] = NIL) THEN
+    New(NLNetPages[PageNo]);
+END;
+
+FUNCTION NLGetNodePtr(Index: LongInt): PNLNodeRec;
+VAR
+  PageNo, Ofs: Integer;
+BEGIN
+  PageNo := (Index - 1) DIV NLNodesPerPage + 1;
+  Ofs := (Index - 1) MOD NLNodesPerPage + 1;
+  NLGetNodePtr := @NLNodePages[PageNo]^.Items[Ofs];
+END;
+
+FUNCTION NLGetNetPtr(Index: Integer): PNLNetRec;
+VAR
+  PageNo, Ofs: Integer;
+BEGIN
+  PageNo := (Index - 1) DIV NLNetsPerPage + 1;
+  Ofs := (Index - 1) MOD NLNetsPerPage + 1;
+  NLGetNetPtr := @NLNetPages[PageNo]^.Items[Ofs];
+END;
+
+FUNCTION NLFindNetOfNode(NodeIdx: LongInt): Integer;
+VAR
+  I: Integer;
+  P: PNLNetRec;
+BEGIN
+  NLFindNetOfNode := 0;
+  IF (NodeIdx < 1) OR (NodeIdx > NLNodeCount) THEN Exit;
+  FOR I := 1 TO NLNetCount DO
+  BEGIN
+    P := NLGetNetPtr(I);
+    IF (NodeIdx >= P^.NodeStart) AND (NodeIdx <= P^.NodeEnd) THEN
+    BEGIN
+      NLFindNetOfNode := I;
+      Exit;
+    END;
+  END;
+END;
+
+FUNCTION NLFindNodeGlobal(Q: AStr): LongInt;
+VAR
+  J: LongInt;
+  PN: PNLNodeRec;
+  UQ: AStr;
+  Want, Code: Integer;
+BEGIN
+  NLFindNodeGlobal := 0;
+  UQ := NLUpperS(Q);
+  Val(Q, Want, Code);
+  FOR J := 1 TO NLNodeCount DO
+  BEGIN
+    PN := NLGetNodePtr(J);
+    IF (Code = 0) AND (PN^.Number = Want) THEN
+    BEGIN
+      NLFindNodeGlobal := J;
+      Exit;
+    END;
+    IF Pos(UQ, NLUpperS(PN^.Addr)) > 0 THEN
+    BEGIN
+      NLFindNodeGlobal := J;
+      Exit;
+    END;
+    IF Pos(UQ, NLUpperS(PN^.BBS)) > 0 THEN
+    BEGIN
+      NLFindNodeGlobal := J;
+      Exit;
+    END;
+    IF Pos(UQ, NLUpperS(PN^.Sysop)) > 0 THEN
+    BEGIN
+      NLFindNodeGlobal := J;
+      Exit;
+    END;
+  END;
+END;
+
+FUNCTION NLNormSearch(S: STRING): STRING;
+VAR
+  I: Integer;
+BEGIN
+  S := NLU2Sp(NLUpperS(NLTrimS(S)));
+  FOR I := 1 TO Length(S) DO
+    IF S[I] = #9 THEN
+      S[I] := ' ';
+  NLNormSearch := S;
+END;
+
+FUNCTION NLMatchSearch(CONST Query, Addr, BBS, City, Sysop: STRING;
+  NodeNum: Integer): Boolean;
+VAR
+  QN, AN, BN, CN, SN: STRING;
+  Want, Code: Integer;
+BEGIN
+  QN := NLNormSearch(Query);
+  AN := NLNormSearch(Addr);
+  BN := NLNormSearch(BBS);
+  CN := NLNormSearch(City);
+  SN := NLNormSearch(Sysop);
+
+  NLMatchSearch := FALSE;
+  IF QN = '' THEN Exit;
+
+  Val(Query, Want, Code);
+  IF (Code = 0) AND (NodeNum = Want) THEN
+  BEGIN
+    NLMatchSearch := TRUE;
+    Exit;
+  END;
+
+  IF Pos(QN, AN) > 0 THEN
+  BEGIN
+    NLMatchSearch := TRUE;
+    Exit;
+  END;
+  IF Pos(QN, BN) > 0 THEN
+  BEGIN
+    NLMatchSearch := TRUE;
+    Exit;
+  END;
+  IF Pos(QN, CN) > 0 THEN
+  BEGIN
+    NLMatchSearch := TRUE;
+    Exit;
+  END;
+  IF Pos(QN, SN) > 0 THEN
+  BEGIN
+    NLMatchSearch := TRUE;
+    Exit;
+  END;
+END;
+
+FUNCTION NLSearchNodeInFile(FN, Query: STRING; VAR FoundZone, FoundNet,
+  FoundNode: Integer; VAR FoundKind: Char): Boolean;
+VAR
+  F: Text;
+  Line, S, Tok, BBS, City, Sysop, Phone, Baud, Status, Addr: STRING;
+  Num, Code, CurZoneNum, CurNetNum, NodeNum: Integer;
+BEGIN
+  NLSearchNodeInFile := FALSE;
+  FoundZone := 0;
+  FoundNet := 0;
+  FoundNode := 0;
+  FoundKind := ' ';
+
+  Assign(F, FN);
+  {$I-} Reset(F); {$I+}
+  IF IOResult <> 0 THEN Exit;
+
+  CurZoneNum := 0;
+  CurNetNum := 0;
+  WHILE NOT EOF(F) DO
+  BEGIN
+    ReadLn(F, Line);
+    Line := NLTrimS(Line);
+    IF Line = '' THEN Continue;
+    IF Line[1] = ';' THEN Continue;
+
+    S := Line;
+    Tok := NLUpperS(NLTrimS(NLNextToken(S)));
+
+    IF Tok = 'ZONE' THEN
+    BEGIN
+      Val(NLTrimS(NLNextToken(S)), Num, Code);
+      IF Code <> 0 THEN Continue;
+      BBS := NLTrimS(NLNextToken(S));
+      City := NLTrimS(NLNextToken(S));
+      Sysop := NLTrimS(NLNextToken(S));
+      Phone := NLTrimS(NLNextToken(S));
+      Baud := NLTrimS(NLNextToken(S));
+      CurZoneNum := Num;
+      CurNetNum := Num;
+      Addr := IntToStr(CurZoneNum) + ':' + IntToStr(CurNetNum) + '/0';
+      IF NLMatchSearch(Query, Addr, BBS, City, Sysop, 0) THEN
+      BEGIN
+        FoundZone := CurZoneNum;
+        FoundNet := CurNetNum;
+        FoundNode := 0;
+        FoundKind := 'Z';
+        NLSearchNodeInFile := TRUE;
+        Close(F);
+        Exit;
+      END;
+    END
+    ELSE IF Tok = 'REGION' THEN
+    BEGIN
+      Val(NLTrimS(NLNextToken(S)), Num, Code);
+      IF Code <> 0 THEN Continue;
+      BBS := NLTrimS(NLNextToken(S));
+      City := NLTrimS(NLNextToken(S));
+      Sysop := NLTrimS(NLNextToken(S));
+      Phone := NLTrimS(NLNextToken(S));
+      Baud := NLTrimS(NLNextToken(S));
+      CurNetNum := Num;
+      Addr := IntToStr(CurZoneNum) + ':' + IntToStr(CurNetNum) + '/0';
+      IF NLMatchSearch(Query, Addr, BBS, City, Sysop, 0) THEN
+      BEGIN
+        FoundZone := CurZoneNum;
+        FoundNet := CurNetNum;
+        FoundNode := 0;
+        FoundKind := 'R';
+        NLSearchNodeInFile := TRUE;
+        Close(F);
+        Exit;
+      END;
+    END
+    ELSE IF Tok = 'HOST' THEN
+    BEGIN
+      Val(NLTrimS(NLNextToken(S)), Num, Code);
+      IF Code <> 0 THEN Continue;
+      BBS := NLTrimS(NLNextToken(S));
+      City := NLTrimS(NLNextToken(S));
+      Sysop := NLTrimS(NLNextToken(S));
+      Phone := NLTrimS(NLNextToken(S));
+      Baud := NLTrimS(NLNextToken(S));
+      CurNetNum := Num;
+      Addr := IntToStr(CurZoneNum) + ':' + IntToStr(CurNetNum) + '/0';
+      IF NLMatchSearch(Query, Addr, BBS, City, Sysop, 0) THEN
+      BEGIN
+        FoundZone := CurZoneNum;
+        FoundNet := CurNetNum;
+        FoundNode := 0;
+        FoundKind := 'H';
+        NLSearchNodeInFile := TRUE;
+        Close(F);
+        Exit;
+      END;
+    END
+    ELSE
+    BEGIN
+      Status := '';
+      Val(Tok, Num, Code);
+      IF Code <> 0 THEN
+      BEGIN
+        Status := Tok;
+        Val(NLTrimS(NLNextToken(S)), Num, Code);
+        IF Code <> 0 THEN Continue;
+      END;
+      NodeNum := Num;
+      BBS := NLTrimS(NLNextToken(S));
+      City := NLTrimS(NLNextToken(S));
+      Sysop := NLTrimS(NLNextToken(S));
+      Phone := NLTrimS(NLNextToken(S));
+      Baud := NLTrimS(NLNextToken(S));
+      Addr := IntToStr(CurZoneNum) + ':' + IntToStr(CurNetNum) + '/' +
+        IntToStr(NodeNum);
+      IF NLMatchSearch(Query, Addr, BBS, City, Sysop, NodeNum) THEN
+      BEGIN
+        FoundZone := CurZoneNum;
+        FoundNet := CurNetNum;
+        FoundNode := NodeNum;
+        FoundKind := 'N';
+        NLSearchNodeInFile := TRUE;
+        Close(F);
+        Exit;
+      END;
+    END;
+  END;
+
+  Close(F);
+END;
+
+FUNCTION NLFindNetIndex(ZoneNum, NetNum: Integer): Integer;
+VAR
+  I: Integer;
+  P: PNLNetRec;
+BEGIN
+  NLFindNetIndex := 0;
+  FOR I := 1 TO NLNetCount DO
+  BEGIN
+    P := NLGetNetPtr(I);
+    IF (P^.ZoneNum = ZoneNum) AND (P^.NetNum = NetNum) THEN
+    BEGIN
+      NLFindNetIndex := I;
+      Exit;
+    END;
+  END;
+END;
+
+FUNCTION NLFindLoadedNodeByNumber(NodeNum: Integer): LongInt;
+VAR
+  J: LongInt;
+  PN: PNLNodeRec;
+BEGIN
+  NLFindLoadedNodeByNumber := 0;
+  FOR J := 1 TO NLNodeCount DO
+  BEGIN
+    PN := NLGetNodePtr(J);
+    IF PN^.Number = NodeNum THEN
+    BEGIN
+      NLFindLoadedNodeByNumber := J;
+      Exit;
+    END;
+  END;
+END;
+
+PROCEDURE NLParseNodeList(FN: STRING); FORWARD;
+PROCEDURE NLBrowseNodes(NetIdx: Integer); FORWARD;
+
+FUNCTION NLOpenGlobalSearchResult(FN, Query: STRING): Boolean;
+VAR
+  ZoneNum, NetNum, NodeNum: Integer;
+  Kind: Char;
+  NetIdx: Integer;
+BEGIN
+  NLOpenGlobalSearchResult := FALSE;
+  IF NOT NLSearchNodeInFile(FN, Query, ZoneNum, NetNum, NodeNum, Kind) THEN
+    Exit;
+
+  NLDonePages;
+  NLInitPages;
+  NLSourceFile := FN;
+  NLParseNodeList(NLSourceFile);
+  NetIdx := NLFindNetIndex(ZoneNum, NetNum);
+  IF NetIdx <= 0 THEN Exit;
+  NLStartNodeIdx := NodeNum;
+  NLBrowseNodes(NetIdx);
+  NLOpenGlobalSearchResult := TRUE;
+END;
+
+FUNCTION NLOpenSearchAcrossCfg(Query: STRING): Boolean;
+VAR
+  I: Integer;
+  FN: STRING;
+BEGIN
+  NLOpenSearchAcrossCfg := FALSE;
+  FOR I := 1 TO NLCfgCount DO
+  BEGIN
+    FN := ResolveLatestNodeList2(NLCfgItems[I]^.Mask);
+    IF FN = '' THEN Continue;
+    IF NLOpenGlobalSearchResult(FN, Query) THEN
+    BEGIN
+      NLOpenSearchAcrossCfg := TRUE;
+      Exit;
+    END;
+  END;
+END;
+
+PROCEDURE NLAddNode(Num: Integer; CONST St, ABBS, ACity, ASysop, APhone,
+  ABaud: STRING; ZoneNum, NetNum: Integer);
+VAR
+  PageNo: Integer;
+  P: PNLNodeRec;
+BEGIN
+  Inc(NLNodeCount);
+  PageNo := (NLNodeCount - 1) DIV NLNodesPerPage + 1;
+  IF PageNo > NLMaxNodePages THEN
+  BEGIN
+    Dec(NLNodeCount);
+    Exit;
+  END;
+  NLEnsureNodePage(PageNo);
+  P := NLGetNodePtr(NLNodeCount);
+  P^.Number := Num;
+  P^.Status := St;
+  P^.BBS := NLU2Sp(NLTrimS(ABBS));
+  P^.City := NLU2Sp(NLTrimS(ACity));
+  P^.Sysop := NLU2Sp(NLTrimS(ASysop));
+  P^.Phone := NLTrimS(APhone);
+  P^.Baud := NLTrimS(ABaud);
+  P^.Addr := IntToStr(ZoneNum) + ':' + IntToStr(NetNum) + '/' + IntToStr(Num);
+END;
+
+FUNCTION NLAddZone(ZoneNum: Integer; AName: STRING): Integer;
+BEGIN
+  IF NLZoneCount >= NLMaxZones THEN
+  BEGIN
+    NLAddZone := 0;
+    Exit;
+  END;
+  Inc(NLZoneCount);
+  New(NLZones[NLZoneCount]);
+  NLZones[NLZoneCount]^.ZoneNum := ZoneNum;
+  NLZones[NLZoneCount]^.Name := NLU2Sp(NLTrimS(AName));
+  NLZones[NLZoneCount]^.NetStart := NLNetCount + 1;
+  NLZones[NLZoneCount]^.NetEnd := NLNetCount;
+  NLAddZone := NLZoneCount;
+END;
+
+FUNCTION NLAddNet(ZoneNum, NetNum: Integer; Kind: Char;
+  AName: STRING): Integer;
+VAR
+  PageNo, Z: Integer;
+  P: PNLNetRec;
+BEGIN
+  Inc(NLNetCount);
+  PageNo := (NLNetCount - 1) DIV NLNetsPerPage + 1;
+  IF PageNo > NLMaxNetPages THEN
+  BEGIN
+    Dec(NLNetCount);
+    NLAddNet := 0;
+    Exit;
+  END;
+  NLEnsureNetPage(PageNo);
+  P := NLGetNetPtr(NLNetCount);
+  P^.ZoneNum := ZoneNum;
+  P^.NetNum := NetNum;
+  P^.Kind := Kind;
+  P^.Name := NLU2Sp(NLTrimS(AName));
+  P^.NodeStart := NLNodeCount + 1;
+  P^.NodeEnd := NLNodeCount;
+
+  FOR Z := 1 TO NLZoneCount DO
+    IF (NLZones[Z] <> NIL) AND (NLZones[Z]^.ZoneNum = ZoneNum) THEN
+      NLZones[Z]^.NetEnd := NLNetCount;
+
+  NLAddNet := NLNetCount;
+END;
+
+PROCEDURE NLParseNodeList(FN: STRING);
+VAR
+  F: Text;
+  Line, S, Tok: STRING;
+  Num, Code: Integer;
+  ZIdx, NIdx: Integer;
+  CurZoneNum, CurNetNum: Integer;
+  BBS, City, Sysop, Phone, Baud: STRING;
+BEGIN
+  Assign(F, FN);
+  {$I-} Reset(F); {$I+}
+  IF IOResult <> 0 THEN Exit;
+
+  NLResetData;
+  CurZoneNum := 0;
+  CurNetNum := 0;
+  ZIdx := 0;
+  NIdx := 0;
+
+  WHILE NOT EOF(F) DO
+  BEGIN
+    ReadLn(F, Line);
+    Line := NLTrimS(Line);
+    IF Line = '' THEN Continue;
+    IF Line[1] = ';' THEN Continue;
+
+    S := Line;
+    Tok := NLUpperS(NLTrimS(NLNextToken(S)));
+
+    IF Tok = 'ZONE' THEN
+    BEGIN
+      Val(NLTrimS(NLNextToken(S)), Num, Code);
+      IF Code <> 0 THEN Continue;
+      BBS := NLTrimS(NLNextToken(S));
+      City := NLTrimS(NLNextToken(S));
+      Sysop := NLTrimS(NLNextToken(S));
+      Phone := NLTrimS(NLNextToken(S));
+      Baud := NLTrimS(NLNextToken(S));
+
+      ZIdx := NLAddZone(Num, BBS);
+      IF ZIdx = 0 THEN Break;
+      CurZoneNum := Num;
+      CurNetNum := Num;
+
+      NIdx := NLAddNet(CurZoneNum, CurNetNum, 'Z', BBS);
+      IF NIdx = 0 THEN Break;
+    END
+    ELSE IF Tok = 'REGION' THEN
+    BEGIN
+      Val(NLTrimS(NLNextToken(S)), Num, Code);
+      IF Code <> 0 THEN Continue;
+      BBS := NLTrimS(NLNextToken(S));
+      City := NLTrimS(NLNextToken(S));
+      Sysop := NLTrimS(NLNextToken(S));
+      Phone := NLTrimS(NLNextToken(S));
+      Baud := NLTrimS(NLNextToken(S));
+
+      CurNetNum := Num;
+      NIdx := NLAddNet(CurZoneNum, CurNetNum, 'R', BBS);
+      IF NIdx = 0 THEN Break;
+    END
+    ELSE IF Tok = 'HOST' THEN
+    BEGIN
+      Val(NLTrimS(NLNextToken(S)), Num, Code);
+      IF Code <> 0 THEN Continue;
+      BBS := NLTrimS(NLNextToken(S));
+      City := NLTrimS(NLNextToken(S));
+      Sysop := NLTrimS(NLNextToken(S));
+      Phone := NLTrimS(NLNextToken(S));
+      Baud := NLTrimS(NLNextToken(S));
+
+      CurNetNum := Num;
+      NIdx := NLAddNet(CurZoneNum, CurNetNum, 'H', BBS);
+      IF NIdx = 0 THEN Break;
+    END;
+  END;
+
+  Close(F);
+END;
+
+PROCEDURE NLLoadNodesForNet(FN: STRING; ZoneNum, NetNum: Integer; Kind: Char);
+VAR
+  F: Text;
+  Line, S, Tok: STRING;
+  Num, Code: Integer;
+  CurZoneNum, CurNetNum: Integer;
+  BBS, City, Sysop, Phone, Baud, Status: STRING;
+  Active: Boolean;
+BEGIN
+  Assign(F, FN);
+  {$I-} Reset(F); {$I+}
+  IF IOResult <> 0 THEN Exit;
+
+  NLResetNodesOnly;
+  CurZoneNum := 0;
+  CurNetNum := 0;
+  Active := FALSE;
+
+  WHILE NOT EOF(F) DO
+  BEGIN
+    ReadLn(F, Line);
+    Line := NLTrimS(Line);
+    IF Line = '' THEN Continue;
+    IF Line[1] = ';' THEN Continue;
+
+    S := Line;
+    Tok := NLUpperS(NLTrimS(NLNextToken(S)));
+
+    IF Tok = 'ZONE' THEN
+    BEGIN
+      Val(NLTrimS(NLNextToken(S)), Num, Code);
+      IF Code <> 0 THEN Continue;
+      BBS := NLTrimS(NLNextToken(S));
+      City := NLTrimS(NLNextToken(S));
+      Sysop := NLTrimS(NLNextToken(S));
+      Phone := NLTrimS(NLNextToken(S));
+      Baud := NLTrimS(NLNextToken(S));
+
+      IF Active THEN
+      BEGIN
+        IF Kind = 'Z' THEN
+        BEGIN
+          IF Num <> ZoneNum THEN Break;
+        END
+        ELSE
+          Break;
+      END;
+
+      CurZoneNum := Num;
+      CurNetNum := Num;
+      IF (Kind = 'Z') AND (CurZoneNum = ZoneNum) THEN
+      BEGIN
+        Active := TRUE;
+        NLAddNode(0, 'Zone', BBS, City, Sysop, Phone, Baud,
+          CurZoneNum, CurNetNum);
+      END
+      ELSE
+        Active := FALSE;
+    END
+    ELSE IF Tok = 'REGION' THEN
+    BEGIN
+      Val(NLTrimS(NLNextToken(S)), Num, Code);
+      IF Code <> 0 THEN Continue;
+      BBS := NLTrimS(NLNextToken(S));
+      City := NLTrimS(NLNextToken(S));
+      Sysop := NLTrimS(NLNextToken(S));
+      Phone := NLTrimS(NLNextToken(S));
+      Baud := NLTrimS(NLNextToken(S));
+
+      IF Active AND (Kind <> 'Z') THEN Break;
+
+      CurNetNum := Num;
+      IF Kind = 'Z' THEN
+      BEGIN
+        IF Active THEN Break;
+        CurNetNum := Num;
+        Continue;
+      END;
+
+      IF (CurZoneNum = ZoneNum) AND (Kind = 'R') AND (CurNetNum = NetNum) THEN
+      BEGIN
+        Active := TRUE;
+        NLAddNode(0, 'Region', BBS, City, Sysop, Phone, Baud,
+          CurZoneNum, CurNetNum);
+      END
+      ELSE
+        Active := FALSE;
+    END
+    ELSE IF Tok = 'HOST' THEN
+    BEGIN
+      Val(NLTrimS(NLNextToken(S)), Num, Code);
+      IF Code <> 0 THEN Continue;
+      BBS := NLTrimS(NLNextToken(S));
+      City := NLTrimS(NLNextToken(S));
+      Sysop := NLTrimS(NLNextToken(S));
+      Phone := NLTrimS(NLNextToken(S));
+      Baud := NLTrimS(NLNextToken(S));
+
+      IF Active AND (Kind <> 'Z') THEN Break;
+
+      CurNetNum := Num;
+      IF Kind = 'Z' THEN
+      BEGIN
+        IF Active THEN Break;
+        CurNetNum := Num;
+        Continue;
+      END;
+
+      IF (CurZoneNum = ZoneNum) AND (Kind = 'H') AND (CurNetNum = NetNum) THEN
+      BEGIN
+        Active := TRUE;
+        NLAddNode(0, 'Host', BBS, City, Sysop, Phone, Baud,
+          CurZoneNum, CurNetNum);
+      END
+      ELSE
+        Active := FALSE;
+    END
+    ELSE
+    BEGIN
+      IF NOT Active THEN Continue;
+
+      Status := '';
+      Val(Tok, Num, Code);
+      IF Code <> 0 THEN
+      BEGIN
+        Status := Tok;
+        Val(NLTrimS(NLNextToken(S)), Num, Code);
+        IF Code <> 0 THEN Continue;
+      END;
+      BBS := NLTrimS(NLNextToken(S));
+      City := NLTrimS(NLNextToken(S));
+      Sysop := NLTrimS(NLNextToken(S));
+      Phone := NLTrimS(NLNextToken(S));
+      Baud := NLTrimS(NLNextToken(S));
+
+      NLAddNode(Num, Status, BBS, City, Sysop, Phone, Baud,
+        CurZoneNum, CurNetNum);
+    END;
+  END;
+
+  Close(F);
+END;
+
+FUNCTION NLKindName(K: Char): STRING;
+BEGIN
+  CASE K OF
+    'Z': NLKindName := 'Zone';
+    'R': NLKindName := 'Region';
+    'H': NLKindName := 'Host';
+  ELSE
+    NLKindName := 'Net';
+  END;
+END;
+
+PROCEDURE NLPadRight(VAR SS: AStr; N: Byte);
+BEGIN
+  IF (N = 0) THEN
+    Exit;
+  IF (Length(SS) > N) THEN
+    SS := Copy(SS,1,N)
+  ELSE
+    WHILE (Length(SS) < N) DO
+      SS := SS + ' ';
+END;
+
+FUNCTION NLVisibleLen(S: AStr): Integer;
+VAR
+  I, L: Integer;
+BEGIN
+  I := 1;
+  L := 0;
+  WHILE (I <= Length(S)) DO
+  BEGIN
+    IF (S[I] = '|') AND (I + 2 <= Length(S)) THEN
+      IF (S[I + 1] IN ['0'..'9']) AND (S[I + 2] IN ['0'..'9']) THEN
+      BEGIN
+        Inc(I, 3);
+        Continue;
+      END;
+    Inc(L);
+    Inc(I);
+  END;
+  NLVisibleLen := L;
+END;
+
+PROCEDURE NLHeader(Title, Help: AStr);
+VAR
+  S, Pad: AStr;
+  X, I: Integer;
+BEGIN
+  CLS;
+  S := '|14Renegade Nodelist Browser |07-- |15' + Title;
+  X := (80 - NLVisibleLen(S)) DIV 2;
+  IF (X < 0) THEN
+    X := 0;
+  Pad := '';
+  FOR I := 1 TO X DO
+    Pad := Pad + ' ';
+  ANSIG(1, 1);
+  PrintACR(Pad + S);
+  ANSIG(1, 3);
+  PrintACR('|04' + Help);
+  ANSIG(1, 5);
+
+  PrintACR('|01 ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ');
+  Prompt(#27 + '[0m');
+  Prompt(#27 + '[37;40m');
+END;
+
+PROCEDURE NLColorSeq(ColorKind: Char);
+BEGIN
+  CASE ColorKind OF
+    'Z', 'C': Prompt(#27 + '[1;31;40m'); { red }
+    'R':      Prompt(#27 + '[1;35;40m'); { purple }
+    'N', 'H': Prompt(#27 + '[1;33;40m'); { yellow }
+    'D':      Prompt(#27 + '[1;30;40m'); { dark gray }
+  ELSE
+    Prompt(#27 + '[37;40m');
+  END;
+END;
+
+FUNCTION NLStatusColorKind(CONST S: STRING): Char;
+VAR
+  U: STRING;
+BEGIN
+  U := NLUpperS(S);
+  IF U = 'ZONE' THEN
+    NLStatusColorKind := 'Z'
+  ELSE IF U = 'REGION' THEN
+    NLStatusColorKind := 'R'
+  ELSE IF U = 'HOST' THEN
+    NLStatusColorKind := 'H'
+  ELSE
+    NLStatusColorKind := 'D';
+END;
+
+FUNCTION NLKindColorKind(K: Char): Char;
+BEGIN
+  CASE UpCase(K) OF
+    'Z': NLKindColorKind := 'Z';
+    'R': NLKindColorKind := 'R';
+    'H': NLKindColorKind := 'H';
+  ELSE
+    NLKindColorKind := 'D';
+  END;
+END;
+
+FUNCTION NLStatusPrefix(CONST S: STRING): STRING;
+VAR
+  U: STRING;
+BEGIN
+  U := NLUpperS(S);
+  IF U = 'ZONE' THEN
+    NLStatusPrefix := ' ' + #196 + #196 + ' '
+  ELSE IF U = 'REGION' THEN
+    NLStatusPrefix := '   ' + #195 + #196 + ' '
+  ELSE IF U = 'HOST' THEN
+    NLStatusPrefix := '     ' + #195 + #196 + ' '
+  ELSE
+    NLStatusPrefix := '       ' + #179 + ' ';
+END;
+
+FUNCTION NLKindPrefix(K: Char): STRING;
+BEGIN
+  CASE UpCase(K) OF
+    'Z': NLKindPrefix := ' ' + #196 + #196 + ' ';
+    'R': NLKindPrefix := '   ' + #195 + #196 + ' ';
+    'H': NLKindPrefix := '     ' + #195 + #196 + ' ';
+  ELSE
+    NLKindPrefix := ' ';
+  END;
+END;
+
+PROCEDURE NLPrintLine(Row: Integer; S: AStr; Selected: Boolean; ColorKind: Char);
+BEGIN
+  S := Copy(S,1,79);
+  NLPadRight(S,79);
+
+  ANSIG(1, Row);
+  Prompt(#27 + '[0m');
+  Prompt(#27 + '[37;40m');
+  Prompt(#27 + '[0K');
+  ANSIG(1, Row);
+
+  IF Selected THEN
+  BEGIN
+    Prompt(#27 + '[1;37;44m');
+    Prompt(S);
+    Prompt(#27 + '[0m');
+    Prompt(#27 + '[37;40m');
+  END
+  ELSE
+  BEGIN
+    NLColorSeq(ColorKind);
+    Prompt(S);
+    Prompt(#27 + '[0m');
+    Prompt(#27 + '[37;40m');
+  END;
+END;
+
+
+PROCEDURE NLDrawBox(LeftCol, TopRow, BoxWidth, BoxHeight: Integer);
+VAR
+  I: Integer;
+BEGIN
+  ANSIG(LeftCol, TopRow);
+  Prompt(#27 + '[0m');
+  Prompt(#27 + '[37;40m');
+  Prompt(#27 + '[1;34;40m');
+  Prompt(#218);
+  FOR I := 1 TO BoxWidth - 2 DO
+    Prompt(#196);
+  Prompt(#191);
+  FOR I := 1 TO BoxHeight - 2 DO
+  BEGIN
+    ANSIG(LeftCol, TopRow + I);
+    Prompt(#179);
+    ANSIG(LeftCol + BoxWidth - 1, TopRow + I);
+    Prompt(#179);
+  END;
+  ANSIG(LeftCol, TopRow + BoxHeight - 1);
+  Prompt(#192);
+  FOR I := 1 TO BoxWidth - 2 DO
+    Prompt(#196);
+  Prompt(#217);
+  Prompt(#27 + '[0m');
+  Prompt(#27 + '[37;40m');
+END;
+
+PROCEDURE NLPrintBoxLine(LeftCol, Row, Width: Integer; S: AStr; Selected: Boolean;
+  ColorKind: Char);
+BEGIN
+  S := Copy(S, 1, Width);
+  NLPadRight(S, Width);
+  ANSIG(LeftCol, Row);
+  Prompt(#27 + '[0m');
+  Prompt(#27 + '[37;40m');
+  IF Selected THEN
+  BEGIN
+    Prompt(#27 + '[1;37;44m');
+    Prompt(S);
+    Prompt(#27 + '[0m');
+    Prompt(#27 + '[37;40m');
+  END
+  ELSE
+  BEGIN
+    NLColorSeq(ColorKind);
+    Prompt(S);
+    Prompt(#27 + '[0m');
+    Prompt(#27 + '[37;40m');
+  END;
+END;
+
+PROCEDURE NLClearListArea;
+VAR
+  R: Integer;
+BEGIN
+  FOR R := 6 TO 6 + NLViewRows - 1 DO
+  BEGIN
+    ANSIG(1, R);
+    Prompt(#27 + '[0m');
+    Prompt(#27 + '[37;40m');
+    Prompt(#27 + '[0K');
+  END;
+  Prompt(#27 + '[0m');
+  Prompt(#27 + '[37;40m');
+END;
+
+FUNCTION NLPageCountRows(Top, Total: LongInt; Rows: Integer): Integer;
+VAR
+  Cnt: Integer;
+BEGIN
+  Cnt := Total - Top + 1;
+  IF Cnt > Rows THEN
+    Cnt := Rows;
+  IF Cnt < 0 THEN
+    Cnt := 0;
+  NLPageCountRows := Cnt;
+END;
+
+FUNCTION NLPageCount(Top, Total: LongInt): Integer;
+BEGIN
+  NLPageCount := NLPageCountRows(Top, Total, NLViewRows);
+END;
+
+FUNCTION NLAbsToPagePos(AbsIdx, Top: LongInt): Integer;
+BEGIN
+  NLAbsToPagePos := AbsIdx - Top + 1;
+END;
+
+FUNCTION NLPagePosToAbs(PagePos: Integer; Top: LongInt): LongInt;
+BEGIN
+  NLPagePosToAbs := Top + PagePos - 1;
+END;
+
+PROCEDURE NLWaitKey;
+VAR
+  K: Word;
+BEGIN
+  REPEAT
+    K := GetKey;
+  UNTIL (K = 13) OR (K = 10) OR (K = 27) OR (K = F_LEFT) OR (K = F_RIGHT) OR (K = Ord('Q')) OR (K = Ord('q'));
+END;
+
+FUNCTION NLIsEnterKey(K: Word): Boolean;
+BEGIN
+  NLIsEnterKey := (K = 13) OR (K = 10);
+END;
+
+PROCEDURE NLMsgBox(S: AStr);
+BEGIN
+  CLS;
+  ANSIG(1, 1);
+  PrintACR('^5Renegade Nodelist Browser');
+  ANSIG(1, 3);
+  PrintACR('^7' + S);
+  ANSIG(1, 5);
+  {PrintACR('|09[â–  |15Press any key |09â– ]');}
+  Prompt(#27 + '[0m');
+  Prompt(#27 + '[37;40m');
+  PauseScr(FALSE);
+END;
+
+FUNCTION NLInputField(PromptS: AStr; MaxLen: Byte): AStr;
+VAR
+  S: AStr;
+  Changed: Boolean;
+BEGIN
+  S := '';
+  PrintACR(PromptS);
+  InputString('', S, MaxLen, [InteractiveEdit], Changed);
+  NLInputField := S;
+END;
+
+FUNCTION NLLoadCfg(FN: STRING): Boolean;
+VAR
+  F: Text;
+  NameLine, MaskLine: STRING;
+BEGIN
+  NLLoadCfg := FALSE;
+  NLCfgCount := 0;
+  Assign(F, FN);
+  {$I-} Reset(F); {$I+}
+  IF IOResult <> 0 THEN Exit;
+
+  WHILE (NOT EOF(F)) AND (NLCfgCount < NLMaxCfgItems) DO
+  BEGIN
+    ReadLn(F, NameLine);
+    NameLine := NLTrimS(NameLine);
+    IF EOF(F) THEN Break;
+    ReadLn(F, MaskLine);
+    MaskLine := NLTrimS(MaskLine);
+
+    IF (NameLine <> '') AND (MaskLine <> '') THEN
+    BEGIN
+      Inc(NLCfgCount);
+      New(NLCfgItems[NLCfgCount]);
+      NLCfgItems[NLCfgCount]^.Name := NameLine;
+      NLCfgItems[NLCfgCount]^.Mask := MaskLine;
+      NLCfgItems[NLCfgCount]^.Resolved := ResolveLatestNodeList2(MaskLine);
+    END;
+  END;
+  Close(F);
+  NLLoadCfg := NLCfgCount > 0;
+END;
+
+
+FUNCTION NLFindCfgItem(Q: AStr): Integer;
+VAR
+  J, Want, Code: Integer;
+  UQ: AStr;
+BEGIN
+  NLFindCfgItem := 0;
+  UQ := NLUpperS(Q);
+  Val(Q, Want, Code);
+  FOR J := 1 TO NLCfgCount DO
+    IF ((Code = 0) AND (J = Want)) OR
+       (Pos(UQ, NLUpperS(NLCfgItems[J]^.Name)) > 0) THEN
+    BEGIN
+      NLFindCfgItem := J;
+      Exit;
+    END;
+END;
+
+FUNCTION NLFindZoneItem(Q: AStr): Integer;
+VAR
+  J, Want, Code: Integer;
+  UQ: AStr;
+BEGIN
+  NLFindZoneItem := 0;
+  UQ := NLUpperS(Q);
+  Val(Q, Want, Code);
+  FOR J := 1 TO NLZoneCount DO
+    IF ((Code = 0) AND (NLZones[J]^.ZoneNum = Want)) OR
+       (Pos(UQ, NLUpperS(NLZones[J]^.Name)) > 0) THEN
+    BEGIN
+      NLFindZoneItem := J;
+      Exit;
+    END;
+END;
+
+FUNCTION NLFindNetItem(ZoneIdx: Integer; Q: AStr): Integer;
+VAR
+  J, Want, Code: Integer;
+  UQ: AStr;
+  NP: PNLNetRec;
+BEGIN
+  NLFindNetItem := 0;
+  UQ := NLUpperS(Q);
+  Val(Q, Want, Code);
+  FOR J := NLZones[ZoneIdx]^.NetStart TO NLZones[ZoneIdx]^.NetEnd DO
+  BEGIN
+    NP := NLGetNetPtr(J);
+    IF (((Code = 0) AND (NP^.NetNum = Want)) OR
+        (Pos(UQ, NLUpperS(NP^.Name)) > 0) OR
+        (Pos(UQ, NLUpperS(NLKindName(NP^.Kind))) > 0)) THEN
+    BEGIN
+      NLFindNetItem := J;
+      Exit;
+    END;
+  END;
+END;
+
+FUNCTION NLChooseCfgFile: Boolean;
+CONST
+  NLCfgBoxLeft = 26;
+  NLCfgBoxTop = 6;
+  NLCfgBoxWidth = 30;
+  NLCfgBoxHeight = 15;
+  NLCfgBoxRows = 13;
+VAR
+  Cur, Top, OldCur, OldTop, I, PagePos, PageCnt: Integer;
+  K: Word;
+  Line: AStr;
+
+  PROCEDURE DrawRowAbs(AbsIdx: Integer; Sel: Boolean);
+  VAR
+    RowPos: Integer;
+    ClearLine: AStr;
+  BEGIN
+    IF (AbsIdx < Top) OR (AbsIdx > NLCfgCount) OR
+       (NLAbsToPagePos(AbsIdx, Top) > NLCfgBoxRows) THEN
+      Exit;
+
+    RowPos := NLCfgBoxTop + NLAbsToPagePos(AbsIdx, Top);
+
+    ClearLine := '';
+    NLPadRight(ClearLine, NLCfgBoxWidth - 2);
+    ANSIG(NLCfgBoxLeft + 1, RowPos);
+    Prompt(#27 + '[0m');
+    Prompt(#27 + '[37;40m');
+    Prompt(ClearLine);
+
+    ANSIG(NLCfgBoxLeft + 1, RowPos);
+    IF Sel THEN
+    BEGIN
+      Line := ' ' + IntToStr(AbsIdx) + '. ' + NLCfgItems[AbsIdx]^.Name;
+      NLPadRight(Line, NLCfgBoxWidth - 2);
+      Prompt(#27 + '[1;37;44m');
+      Prompt(Line);
+    END
+    ELSE
+    BEGIN
+      Prompt(' |08' + IntToStr(AbsIdx) + '. |10' + NLCfgItems[AbsIdx]^.Name);
+    END;
+    Prompt(#27 + '[0m');
+    Prompt(#27 + '[37;40m');
+  END;
+
+  PROCEDURE DrawScreen;
+  VAR
+    DrawI: Integer;
+  BEGIN
+    NLHeader('Select Network',
+      '  |08[|11Arrows|08] |07= Up/Down, ' +
+      '|08[|11Enter|08] |07= Select, |08[|11S|08] |07= Search, ' +
+      '|08[|11ESC|08] |07= Back, |08[|11Q|08] |07= Quit');
+    NLClearListArea;
+    NLDrawBox(NLCfgBoxLeft, NLCfgBoxTop, NLCfgBoxWidth, NLCfgBoxHeight);
+    PageCnt := NLPageCountRows(Top, NLCfgCount, NLCfgBoxRows);
+    IF PageCnt > NLCfgBoxRows THEN
+      PageCnt := NLCfgBoxRows;
+    FOR DrawI := 1 TO PageCnt DO
+      DrawRowAbs(Top + DrawI - 1, DrawI = Cur);
+  END;
+
+PROCEDURE DoSearch;
+VAR
+  Query: AStr;
+BEGIN
+  CLS;
+  PrintACR('%LF%LF|11Find Node');
+  NL;
+  PrintACR('|03Search by |11Node #|03, |11BBS Name|03, or |11SysOp Name');
+  NL;
+  Query := NLInputField('|03Search text    : |11', 40);
+  IF Query = '' THEN
+  BEGIN
+    DrawScreen;
+    Exit;
+  END;
+  IF NOT NLOpenSearchAcrossCfg(Query) THEN
+    NLMsgBox('No matching node found.');
+  DrawScreen;
+END;
+
+BEGIN
+  NLChooseCfgFile := FALSE;
+  IF NLCfgCount = 0 THEN Exit;
+
+  Top := 1;
+  Cur := 1;
+  IF NLStartNodeIdx > 0 THEN
+  BEGIN
+    OldTop := NLFindLoadedNodeByNumber(NLStartNodeIdx);
+    IF OldTop > 0 THEN
+    BEGIN
+      Top := ((OldTop - 1) DIV NLSubBoxRows) * NLSubBoxRows + 1;
+      Cur := OldTop - Top + 1;
+    END;
+    NLStartNodeIdx := 0;
+  END;
+  DrawScreen;
+
+  REPEAT
+    K := GetKey;
+    OldCur := Cur;
+    OldTop := Top;
+    PageCnt := NLPageCountRows(Top, NLCfgCount, NLCfgBoxRows);
+    IF PageCnt > NLCfgBoxRows THEN
+      PageCnt := NLCfgBoxRows;
+    CASE K OF
+      F_HOME: BEGIN Top := 1; Cur := 1; END;
+      F_END:
+        BEGIN
+          IF NLCfgCount > NLCfgBoxRows THEN
+            Top := NLCfgCount - NLCfgBoxRows + 1
+          ELSE
+            Top := 1;
+          Cur := NLPageCount(Top, NLCfgCount);
+          IF Cur > NLCfgBoxRows THEN
+            Cur := NLCfgBoxRows;
+        END;
+      F_PGUP:
+        BEGIN
+          IF Top > 1 THEN
+          BEGIN
+            Top := Top - NLCfgBoxRows;
+            IF Top < 1 THEN Top := 1;
+            Cur := NLPageCountRows(Top, NLCfgCount, NLCfgBoxRows);
+            IF Cur > NLCfgBoxRows THEN
+              Cur := NLCfgBoxRows;
+          END
+          ELSE
+            Cur := 1;
+        END;
+      F_PGDN:
+        BEGIN
+          IF Top + NLCfgBoxRows <= NLCfgCount THEN
+          BEGIN
+            Top := Top + NLCfgBoxRows;
+            Cur := 1;
+          END
+          ELSE
+          BEGIN
+            IF NLCfgCount > NLCfgBoxRows THEN
+              Top := NLCfgCount - NLCfgBoxRows + 1
+            ELSE
+              Top := 1;
+            Cur := NLPageCountRows(Top, NLCfgCount, NLCfgBoxRows);
+            IF Cur > NLCfgBoxRows THEN
+              Cur := NLCfgBoxRows;
+          END;
+        END;
+      F_UP:
+        BEGIN
+          IF Cur > 1 THEN
+            Dec(Cur)
+          ELSE IF Top > 1 THEN
+          BEGIN
+            Top := Top - NLCfgBoxRows;
+            IF Top < 1 THEN Top := 1;
+            Cur := NLPageCountRows(Top, NLCfgCount, NLCfgBoxRows);
+            IF Cur > NLCfgBoxRows THEN
+              Cur := NLCfgBoxRows;
+          END;
+        END;
+      F_DOWN:
+        BEGIN
+          IF Cur < PageCnt THEN
+            Inc(Cur)
+          ELSE IF Top + NLCfgBoxRows <= NLCfgCount THEN
+          BEGIN
+            Top := Top + NLCfgBoxRows;
+            Cur := 1;
+          END;
+        END;
+      13, 10, F_RIGHT:
+        BEGIN
+          PagePos := NLPagePosToAbs(Cur, Top);
+          NLSourceFile := ResolveLatestNodeList2(NLCfgItems[PagePos]^.Mask);
+          IF NLSourceFile = '' THEN
+          BEGIN
+            NLMsgBox('Could not locate nodelist: ' + NLCfgItems[PagePos]^.Mask);
+            DrawScreen;
+          END
+          ELSE
+          BEGIN
+            NLChooseCfgFile := TRUE;
+            Exit;
+          END;
+        END;
+      Ord('S'), Ord('s'), Ord('/'):
+        BEGIN
+          DoSearch;
+        END;
+      27, F_LEFT: Exit;
+      Ord('Q'), Ord('q'):
+        BEGIN
+          NLQuit := TRUE;
+          Exit;
+        END;
+    END;
+
+    IF Top <> OldTop THEN
+      DrawScreen
+    ELSE IF Cur <> OldCur THEN
+    BEGIN
+      DrawRowAbs(NLPagePosToAbs(OldCur, Top), FALSE);
+      DrawRowAbs(NLPagePosToAbs(Cur, Top), TRUE);
+    END;
+  UNTIL FALSE;
+END;
+
+PROCEDURE NLShowNode(P: PNLNodeRec);
+VAR
+  BoxX, BoxY, BoxW, BoxH: Integer;
+BEGIN
+  NLHeader('Node Details','                              |10Press |08[|15ENTER|08] |10to Return');
+
+  BoxW := 50;
+  BoxH := 17;
+  BoxX := ((80 - BoxW) DIV 2) + 1;
+  BoxY := 6;
+
+  NLDrawBox(BoxX, BoxY, BoxW, BoxH);
+
+  ANSIG(BoxX + 2, BoxY + 2);  PrintACR('|00^2Address ^1: |15' + P^.Addr);
+  ANSIG(BoxX + 2, BoxY + 4);
+  IF NLUpperS(P^.Status) = 'ZONE' THEN
+    PrintACR('^2Status  ^1: |12Zone')
+  ELSE IF NLUpperS(P^.Status) = 'REGION' THEN
+    PrintACR('^2Status  ^1: |13Region')
+  ELSE IF NLUpperS(P^.Status) = 'HOST' THEN
+    PrintACR('^2Status  ^1: |14Host')
+  ELSE
+    PrintACR('^2Status  ^1: ^7' + P^.Status);
+  ANSIG(BoxX + 2, BoxY + 6);  PrintACR('^2BBS     ^1: |15' + P^.BBS);
+  ANSIG(BoxX + 2, BoxY + 8);  PrintACR('^2City    ^1: |15' + P^.City);
+  ANSIG(BoxX + 2, BoxY + 10); PrintACR('^2SysOp   ^1: |15' + P^.Sysop);
+  ANSIG(BoxX + 2, BoxY + 12); PrintACR('^2Phone   ^1: |15' + P^.Phone);
+  ANSIG(BoxX + 2, BoxY + 14); PrintACR('^2Baud    ^1: |15' + P^.Baud);
+  {ANSIG(BoxX + 2, BoxY + 15); PrintACR('|10Press Enter to return.');}
+
+  Prompt(#27 + '[0m');
+  Prompt(#27 + '[37;40m');
+  NLWaitKey;
+END;
+
+PROCEDURE NLClampNodeView(VAR Cur, Top: LongInt; FirstIdx, LastIdx: LongInt);
+BEGIN
+  IF Cur < FirstIdx THEN Cur := FirstIdx;
+  IF Cur > LastIdx THEN Cur := LastIdx;
+  IF Top > Cur THEN Top := Cur;
+  IF Cur > Top + NLViewRows - 1 THEN
+    Top := Cur - NLViewRows + 1;
+  IF Top < FirstIdx THEN Top := FirstIdx;
+  IF Top > LastIdx THEN Top := LastIdx;
+END;
+
+PROCEDURE NLBrowseNodes(NetIdx: Integer);
+VAR
+  Cur, Top, OldCur, OldTop, I, PageCnt: LongInt;
+  K: Word;
+  P: PNLNodeRec;
+  NP: PNLNetRec;
+  Line, StatusStr: AStr;
+  BoxLeft, BoxTop, BoxWidth, BoxHeight: Integer;
+  SaveZoneNum, SaveNetNum: Integer;
+  SaveKind: Char;
+
+  PROCEDURE DrawRowAbs(AbsIdx: LongInt; Sel: Boolean);
+  BEGIN
+    IF (AbsIdx < Top) OR (AbsIdx > NLNodeCount) OR
+       (NLAbsToPagePos(AbsIdx, Top) > NLSubBoxRows) THEN
+      Exit;
+    P := NLGetNodePtr(AbsIdx);
+    StatusStr := P^.Status;
+    IF StatusStr <> '' THEN
+      StatusStr := ' [' + StatusStr + ']';
+    Line := NLStatusPrefix(P^.Status) + P^.Addr + StatusStr + ' ' + P^.BBS;
+    NLPrintBoxLine(BoxLeft + 1, BoxTop + NLAbsToPagePos(AbsIdx, Top),
+      BoxWidth - 2, Line, Sel, NLStatusColorKind(P^.Status));
+  END;
+
+  PROCEDURE DrawScreen;
+  VAR
+    DrawI: LongInt;
+  BEGIN
+    NLHeader(NLKindName(NP^.Kind) + ' ' + IntToStr(NP^.NetNum) + ' - ' +
+      NP^.Name,
+      '  |08[|11Arrows|08] |07= Up/Down, ' +
+      '|08[|11Enter|08] |07= Select, |08[|11S|08] |07= Search, ' +
+      '|08[|11ESC|08] |07= Back, |08[|11Q|08] |07= Quit');
+    NLClearListArea;
+    NLDrawBox(BoxLeft, BoxTop, BoxWidth, BoxHeight);
+    PageCnt := NLPageCountRows(Top, NLNodeCount, NLSubBoxRows);
+    IF PageCnt > NLSubBoxRows THEN
+      PageCnt := NLSubBoxRows;
+    FOR DrawI := 1 TO PageCnt DO
+      DrawRowAbs(Top + DrawI - 1, DrawI = Cur);
+  END;
+
+
+  FUNCTION NLFindNodeByNumber(Q: AStr): LongInt;
+  VAR
+    J, Code, Want: Integer;
+    PN: PNLNodeRec;
+  BEGIN
+    NLFindNodeByNumber := 0;
+    Val(Q, Want, Code);
+    FOR J := 1 TO NLNodeCount DO
+    BEGIN
+      PN := NLGetNodePtr(J);
+      IF (Code = 0) AND (PN^.Number = Want) THEN
+      BEGIN
+        NLFindNodeByNumber := J;
+        Exit;
+      END;
+      IF Pos(NLUpperS(Q), NLUpperS(PN^.Addr)) > 0 THEN
+      BEGIN
+        NLFindNodeByNumber := J;
+        Exit;
+      END;
+    END;
+  END;
+
+  FUNCTION NLFindNodeByBBS(Q: AStr): LongInt;
+  VAR
+    J: Integer;
+    PN: PNLNodeRec;
+    UQ: AStr;
+  BEGIN
+    NLFindNodeByBBS := 0;
+    UQ := NLUpperS(Q);
+    FOR J := 1 TO NLNodeCount DO
+    BEGIN
+      PN := NLGetNodePtr(J);
+      IF Pos(UQ, NLUpperS(PN^.BBS)) > 0 THEN
+      BEGIN
+        NLFindNodeByBBS := J;
+        Exit;
+      END;
+    END;
+  END;
+
+  FUNCTION NLFindNodeBySystem(Q: AStr): LongInt;
+  VAR
+    J: Integer;
+    PN: PNLNodeRec;
+    UQ: AStr;
+  BEGIN
+    NLFindNodeBySystem := 0;
+    UQ := NLUpperS(Q);
+    FOR J := 1 TO NLNodeCount DO
+    BEGIN
+      PN := NLGetNodePtr(J);
+      IF (Pos(UQ, NLUpperS(PN^.Sysop)) > 0) OR
+         (Pos(UQ, NLUpperS(PN^.BBS)) > 0) OR
+         (Pos(UQ, NLUpperS(PN^.City)) > 0) THEN
+      BEGIN
+        NLFindNodeBySystem := J;
+        Exit;
+      END;
+    END;
+  END;
+
+  PROCEDURE NLJumpToFound(Idx: LongInt);
+  BEGIN
+    IF (Idx < 1) OR (Idx > NLNodeCount) THEN Exit;
+    Top := ((Idx - 1) DIV NLSubBoxRows) * NLSubBoxRows + 1;
+    Cur := Idx - Top + 1;
+  END;
+
+  PROCEDURE DoSearch;
+  VAR
+    Query: AStr;
+    PrevSource: STRING;
+  BEGIN
+    CLS;
+    PrintACR('%LF%LF|11Find Node');
+    NL;
+    PrintACR('|03Search by |11Node #|03, |11BBS Name|03, or |11SysOp Name');
+    NL;
+    Query := NLInputField('|03Search text    : |11', 40);
+    IF Query = '' THEN
+    BEGIN
+      DrawScreen;
+      Exit;
+    END;
+
+    PrevSource := NLSourceFile;
+    IF NOT NLOpenGlobalSearchResult(PrevSource, Query) THEN
+      NLMsgBox('No matching node found.');
+    IF NLQuit THEN Exit;
+
+    NLSourceFile := PrevSource;
+    NLDonePages;
+    NLInitPages;
+    NLParseNodeList(NLSourceFile);
+    NetIdx := NLFindNetIndex(SaveZoneNum, SaveNetNum);
+    IF NetIdx <= 0 THEN
+    BEGIN
+      NLMsgBox('Unable to restore previous node list.');
+      Exit;
+    END;
+    NP := NLGetNetPtr(NetIdx);
+    NLLoadNodesForNet(NLSourceFile, SaveZoneNum, SaveNetNum, SaveKind);
+    IF NLNodeCount <= 0 THEN
+    BEGIN
+      NLMsgBox('No entries found for this item.');
+      Exit;
+    END;
+    DrawScreen;
+  END;
+
+BEGIN
+  BoxWidth := NLSubBoxWidth;
+  BoxHeight := NLSubBoxHeight;
+  BoxLeft := ((80 - BoxWidth) DIV 2) + 1;
+  BoxTop := 7;
+
+  NP := NLGetNetPtr(NetIdx);
+  SaveZoneNum := NP^.ZoneNum;
+  SaveNetNum := NP^.NetNum;
+  SaveKind := NP^.Kind;
+  NLLoadNodesForNet(NLSourceFile, SaveZoneNum, SaveNetNum, SaveKind);
+  IF NLNodeCount <= 0 THEN
+  BEGIN
+    NLMsgBox('No entries found for this item.');
+    Exit;
+  END;
+
+  Top := 1;
+  Cur := 1;
+  IF NLStartNodeIdx > 0 THEN
+  BEGIN
+    OldTop := NLFindLoadedNodeByNumber(NLStartNodeIdx);
+    IF OldTop > 0 THEN
+    BEGIN
+      Top := ((OldTop - 1) DIV NLSubBoxRows) * NLSubBoxRows + 1;
+      Cur := OldTop - Top + 1;
+    END;
+    NLStartNodeIdx := 0;
+  END;
+  DrawScreen;
+
+  REPEAT
+    K := GetKey;
+    OldCur := Cur;
+    OldTop := Top;
+    PageCnt := NLPageCountRows(Top, NLNodeCount, NLSubBoxRows);
+    CASE K OF
+      F_HOME: BEGIN Top := 1; Cur := 1; END;
+      F_END:
+        BEGIN
+          IF NLNodeCount > NLSubBoxRows THEN
+            Top := NLNodeCount - NLSubBoxRows + 1
+          ELSE
+            Top := 1;
+          Cur := NLPageCount(Top, NLNodeCount);
+        END;
+      F_PGUP:
+        BEGIN
+          IF Top > 1 THEN
+          BEGIN
+            Top := Top - NLSubBoxRows;
+            IF Top < 1 THEN Top := 1;
+            Cur := NLPageCountRows(Top, NLNodeCount, NLSubBoxRows);
+          END
+          ELSE
+            Cur := 1;
+        END;
+      F_PGDN:
+        BEGIN
+          IF Top + NLSubBoxRows <= NLNodeCount THEN
+          BEGIN
+            Top := Top + NLSubBoxRows;
+            Cur := 1;
+          END
+          ELSE
+          BEGIN
+            IF NLNodeCount > NLSubBoxRows THEN
+              Top := NLNodeCount - NLSubBoxRows + 1
+            ELSE
+              Top := 1;
+            Cur := NLPageCountRows(Top, NLNodeCount, NLSubBoxRows);
+          END;
+        END;
+      F_UP:
+        BEGIN
+          IF Cur > 1 THEN
+            Dec(Cur)
+          ELSE IF Top > 1 THEN
+          BEGIN
+            Top := Top - NLSubBoxRows;
+            IF Top < 1 THEN Top := 1;
+            Cur := NLPageCountRows(Top, NLNodeCount, NLSubBoxRows);
+          END;
+        END;
+      F_DOWN:
+        BEGIN
+          PageCnt := NLPageCountRows(Top, NLNodeCount, NLSubBoxRows);
+          IF Cur < PageCnt THEN
+            Inc(Cur)
+          ELSE IF Top + NLSubBoxRows <= NLNodeCount THEN
+          BEGIN
+            Top := Top + NLSubBoxRows;
+            Cur := 1;
+          END;
+        END;
+      13, 10, F_RIGHT:
+        BEGIN
+          NLShowNode(NLGetNodePtr(NLPagePosToAbs(Cur, Top)));
+          DrawScreen;
+        END;
+      Ord('S'), Ord('s'), Ord('/'):
+        BEGIN
+          DoSearch;
+        END;
+      27, F_LEFT: Exit;
+      Ord('Q'), Ord('q'):
+        BEGIN
+          NLQuit := TRUE;
+          Exit;
+        END;
+    END;
+
+    IF Top <> OldTop THEN
+      DrawScreen
+    ELSE IF Cur <> OldCur THEN
+    BEGIN
+      DrawRowAbs(NLPagePosToAbs(OldCur, Top), FALSE);
+      DrawRowAbs(NLPagePosToAbs(Cur, Top), TRUE);
+    END;
+  UNTIL FALSE;
+END;
+
+PROCEDURE NLBrowseNets(ZoneIdx: Integer);
+VAR
+  Cur, Top, OldCur, OldTop, I, Count, PageCnt: Integer;
+  K: Word;
+  NP: PNLNetRec;
+  Line: AStr;
+  BoxLeft, BoxTop, BoxWidth, BoxHeight: Integer;
+
+  PROCEDURE DrawRowAbs(AbsIdx: Integer; Sel: Boolean);
+  BEGIN
+    IF (AbsIdx < Top) OR (AbsIdx > NLZones[ZoneIdx]^.NetEnd) OR
+       (NLAbsToPagePos(AbsIdx, Top) > NLSubBoxRows) THEN
+      Exit;
+    NP := NLGetNetPtr(AbsIdx);
+    Line := NLKindPrefix(NP^.Kind) + NLKindName(NP^.Kind) + ' #' +
+      IntToStr(NP^.NetNum) + ': ' + NP^.Name;
+    NLPrintBoxLine(BoxLeft + 1, BoxTop + NLAbsToPagePos(AbsIdx, Top),
+      BoxWidth - 2, Line, Sel, NLKindColorKind(NP^.Kind));
+  END;
+
+  PROCEDURE DrawScreen;
+  VAR
+    DrawI: Integer;
+  BEGIN
+    NLHeader('Zone ' + IntToStr(NLZones[ZoneIdx]^.ZoneNum) + ' - ' +
+      NLZones[ZoneIdx]^.Name,
+      '  |08[|11Arrows|08] |07= Up/Down, ' +
+      '|08[|11Enter|08] |07= Select, |08[|11S|08] |07= Search, ' +
+      '|08[|11ESC|08] |07= Back, |08[|11Q|08] |07= Quit');
+    NLClearListArea;
+    NLDrawBox(BoxLeft, BoxTop, BoxWidth, BoxHeight);
+    PageCnt := NLPageCountRows(Top, NLZones[ZoneIdx]^.NetEnd, NLSubBoxRows);
+    IF PageCnt > NLSubBoxRows THEN
+      PageCnt := NLSubBoxRows;
+    FOR DrawI := 1 TO PageCnt DO
+      DrawRowAbs(Top + DrawI - 1, DrawI = Cur);
+  END;
+
+PROCEDURE DoSearch;
+VAR
+  Query: AStr;
+  PrevSource: STRING;
+BEGIN
+  CLS;
+  PrintACR('%LF%LF|11Find Node');
+  NL;
+  PrintACR('|03Search by |11Node #|03, |11BBS Name|03, or |11SysOp Name');
+  NL;
+  Query := NLInputField('|03Search text    : |11', 40);
+  IF Query = '' THEN
+  BEGIN
+    DrawScreen;
+    Exit;
+  END;
+  PrevSource := NLSourceFile;
+  IF NOT NLOpenGlobalSearchResult(PrevSource, Query) THEN
+    NLMsgBox('No matching node found.');
+  IF NLQuit THEN Exit;
+  NLSourceFile := PrevSource;
+  NLDonePages;
+  NLInitPages;
+  NLParseNodeList(NLSourceFile);
+  DrawScreen;
+END;
+
+BEGIN
+  IF NLZones[ZoneIdx] = NIL THEN Exit;
+  IF NLZones[ZoneIdx]^.NetEnd < NLZones[ZoneIdx]^.NetStart THEN Exit;
+
+  BoxWidth := NLSubBoxWidth;
+  BoxHeight := NLSubBoxHeight;
+  BoxLeft := ((80 - BoxWidth) DIV 2) + 1;
+  BoxTop := 7;
+
+  Top := NLZones[ZoneIdx]^.NetStart;
+  Cur := 1;
+  Count := NLZones[ZoneIdx]^.NetEnd - NLZones[ZoneIdx]^.NetStart + 1;
+  DrawScreen;
+
+  REPEAT
+    K := GetKey;
+    OldCur := Cur;
+    OldTop := Top;
+    PageCnt := NLPageCountRows(Top, NLZones[ZoneIdx]^.NetEnd, NLSubBoxRows);
+    CASE K OF
+      F_HOME: BEGIN Top := NLZones[ZoneIdx]^.NetStart; Cur := 1; END;
+      F_END:
+        BEGIN
+          IF Count > NLSubBoxRows THEN
+            Top := NLZones[ZoneIdx]^.NetEnd - NLSubBoxRows + 1
+          ELSE
+            Top := NLZones[ZoneIdx]^.NetStart;
+          Cur := NLPageCountRows(Top, NLZones[ZoneIdx]^.NetEnd, NLSubBoxRows);
+        END;
+      F_PGUP:
+        BEGIN
+          IF Top > NLZones[ZoneIdx]^.NetStart THEN
+          BEGIN
+            Top := Top - NLSubBoxRows;
+            IF Top < NLZones[ZoneIdx]^.NetStart THEN
+              Top := NLZones[ZoneIdx]^.NetStart;
+            Cur := NLPageCountRows(Top, NLZones[ZoneIdx]^.NetEnd, NLSubBoxRows);
+          END
+          ELSE
+            Cur := 1;
+        END;
+      F_PGDN:
+        BEGIN
+          IF Top + NLSubBoxRows <= NLZones[ZoneIdx]^.NetEnd THEN
+          BEGIN
+            Top := Top + NLSubBoxRows;
+            Cur := 1;
+          END
+          ELSE
+          BEGIN
+            IF Count > NLSubBoxRows THEN
+              Top := NLZones[ZoneIdx]^.NetEnd - NLSubBoxRows + 1
+            ELSE
+              Top := NLZones[ZoneIdx]^.NetStart;
+            Cur := NLPageCountRows(Top, NLZones[ZoneIdx]^.NetEnd, NLSubBoxRows);
+          END;
+        END;
+      F_UP:
+        BEGIN
+          IF Cur > 1 THEN
+            Dec(Cur)
+          ELSE IF Top > NLZones[ZoneIdx]^.NetStart THEN
+          BEGIN
+            Top := Top - NLSubBoxRows;
+            IF Top < NLZones[ZoneIdx]^.NetStart THEN
+              Top := NLZones[ZoneIdx]^.NetStart;
+            Cur := NLPageCountRows(Top, NLZones[ZoneIdx]^.NetEnd, NLSubBoxRows);
+          END;
+        END;
+      F_DOWN:
+        BEGIN
+          PageCnt := NLPageCountRows(Top, NLZones[ZoneIdx]^.NetEnd, NLSubBoxRows);
+          IF Cur < PageCnt THEN
+            Inc(Cur)
+          ELSE IF Top + NLSubBoxRows <= NLZones[ZoneIdx]^.NetEnd THEN
+          BEGIN
+            Top := Top + NLSubBoxRows;
+            Cur := 1;
+          END;
+        END;
+      13, 10, F_RIGHT:
+        BEGIN
+          NLBrowseNodes(NLPagePosToAbs(Cur, Top));
+          IF NLQuit THEN Exit;
+          DrawScreen;
+        END;
+      Ord('S'), Ord('s'), Ord('/'):
+        BEGIN
+          DoSearch;
+        END;
+      27, F_LEFT: Exit;
+      Ord('Q'), Ord('q'):
+        BEGIN
+          NLQuit := TRUE;
+          Exit;
+        END;
+    END;
+
+    IF Top <> OldTop THEN
+      DrawScreen
+    ELSE IF Cur <> OldCur THEN
+    BEGIN
+      DrawRowAbs(NLPagePosToAbs(OldCur, Top), FALSE);
+      DrawRowAbs(NLPagePosToAbs(Cur, Top), TRUE);
+    END;
+  UNTIL FALSE;
+END;
+
+PROCEDURE NLBrowseZones;
+VAR
+  Cur, Top, OldCur, OldTop, I, PageCnt: Integer;
+  K: Word;
+  Line: AStr;
+  BoxLeft, BoxTop, BoxWidth, BoxHeight: Integer;
+
+  PROCEDURE DrawRowAbs(AbsIdx: Integer; Sel: Boolean);
+  BEGIN
+    IF (AbsIdx < Top) OR (AbsIdx > NLZoneCount) OR
+       (NLAbsToPagePos(AbsIdx, Top) > NLSubBoxRows) THEN
+      Exit;
+    Line := NLKindPrefix('Z') + 'Zone #' + IntToStr(NLZones[AbsIdx]^.ZoneNum) +
+      ': ' + NLZones[AbsIdx]^.Name;
+    NLPrintBoxLine(BoxLeft + 1, BoxTop + NLAbsToPagePos(AbsIdx, Top),
+      BoxWidth - 2, Line, Sel, 'Z');
+  END;
+
+  PROCEDURE DrawScreen;
+  VAR
+    DrawI: Integer;
+  BEGIN
+    NLHeader(NLBaseNameOnly(NLSourceFile),
+      '  |08[|11Arrows|08] |07= Up/Down, ' +
+      '|08[|11Enter|08] |07= Select, |08[|11S|08] |07= Search, ' +
+      '|08[|11ESC|08] |07= Back, |08[|11Q|08] |07= Quit');
+    NLClearListArea;
+    NLDrawBox(BoxLeft, BoxTop, BoxWidth, BoxHeight);
+    PageCnt := NLPageCountRows(Top, NLZoneCount, NLSubBoxRows);
+    IF PageCnt > NLSubBoxRows THEN
+      PageCnt := NLSubBoxRows;
+    FOR DrawI := 1 TO PageCnt DO
+      DrawRowAbs(Top + DrawI - 1, DrawI = Cur);
+  END;
+
+PROCEDURE DoSearch;
+VAR
+  Query: AStr;
+  PrevSource: STRING;
+BEGIN
+  CLS;
+  PrintACR('%LF%LF|11Find Node');
+  NL;
+  PrintACR('|03Search by |11Node #|03, |11BBS Name|03, or |11SysOp Name');
+  NL;
+  Query := NLInputField('|03Search text    : |11', 40);
+  IF Query = '' THEN
+  BEGIN
+    DrawScreen;
+    Exit;
+  END;
+  PrevSource := NLSourceFile;
+  IF NOT NLOpenGlobalSearchResult(PrevSource, Query) THEN
+    NLMsgBox('No matching node found.');
+  IF NLQuit THEN Exit;
+  NLSourceFile := PrevSource;
+  NLDonePages;
+  NLInitPages;
+  NLParseNodeList(NLSourceFile);
+  DrawScreen;
+END;
+
+BEGIN
+  IF NLZoneCount = 0 THEN Exit;
+
+  BoxWidth := NLSubBoxWidth;
+  BoxHeight := NLSubBoxHeight;
+  BoxLeft := ((80 - BoxWidth) DIV 2) + 1;
+  BoxTop := 7;
+
+  Top := 1;
+  Cur := 1;
+  DrawScreen;
+
+  REPEAT
+    K := GetKey;
+    OldCur := Cur;
+    OldTop := Top;
+    PageCnt := NLPageCountRows(Top, NLZoneCount, NLSubBoxRows);
+    CASE K OF
+      F_HOME: BEGIN Top := 1; Cur := 1; END;
+      F_END:
+        BEGIN
+          IF NLZoneCount > NLSubBoxRows THEN
+            Top := NLZoneCount - NLSubBoxRows + 1
+          ELSE
+            Top := 1;
+          Cur := NLPageCountRows(Top, NLZoneCount, NLSubBoxRows);
+        END;
+      F_PGUP:
+        BEGIN
+          IF Top > 1 THEN
+          BEGIN
+            Top := Top - NLSubBoxRows;
+            IF Top < 1 THEN Top := 1;
+            Cur := NLPageCountRows(Top, NLZoneCount, NLSubBoxRows);
+          END
+          ELSE
+            Cur := 1;
+        END;
+      F_PGDN:
+        BEGIN
+          IF Top + NLSubBoxRows <= NLZoneCount THEN
+          BEGIN
+            Top := Top + NLSubBoxRows;
+            Cur := 1;
+          END
+          ELSE
+          BEGIN
+            IF NLZoneCount > NLSubBoxRows THEN
+              Top := NLZoneCount - NLSubBoxRows + 1
+            ELSE
+              Top := 1;
+            Cur := NLPageCountRows(Top, NLZoneCount, NLSubBoxRows);
+          END;
+        END;
+      F_UP:
+        BEGIN
+          IF Cur > 1 THEN
+            Dec(Cur)
+          ELSE IF Top > 1 THEN
+          BEGIN
+            Top := Top - NLSubBoxRows;
+            IF Top < 1 THEN Top := 1;
+            Cur := NLPageCountRows(Top, NLZoneCount, NLSubBoxRows);
+          END;
+        END;
+      F_DOWN:
+        BEGIN
+          PageCnt := NLPageCountRows(Top, NLZoneCount, NLSubBoxRows);
+          IF Cur < PageCnt THEN
+            Inc(Cur)
+          ELSE IF Top + NLSubBoxRows <= NLZoneCount THEN
+          BEGIN
+            Top := Top + NLSubBoxRows;
+            Cur := 1;
+          END;
+        END;
+      13, 10, F_RIGHT:
+        BEGIN
+          NLBrowseNets(NLPagePosToAbs(Cur, Top));
+          IF NLQuit THEN Exit;
+          DrawScreen;
+        END;
+      Ord('S'), Ord('s'), Ord('/'):
+        BEGIN
+          DoSearch;
+        END;
+      27, F_LEFT: Exit;
+      Ord('Q'), Ord('q'):
+        BEGIN
+          NLQuit := TRUE;
+          Exit;
+        END;
+    END;
+
+    IF Top <> OldTop THEN
+      DrawScreen
+    ELSE IF Cur <> OldCur THEN
+    BEGIN
+      DrawRowAbs(NLPagePosToAbs(OldCur, Top), FALSE);
+      DrawRowAbs(NLPagePosToAbs(Cur, Top), TRUE);
+    END;
+  UNTIL FALSE;
+END;
+
+PROCEDURE BrowseNodeLists;
+VAR
+  DatFile: AStr;
+BEGIN
+  NLQuit := FALSE;
+  NLStartNodeIdx := 0;
+  NLInitPages;
+  DatFile := General.DataPath + 'NODELIST.DAT';
+  IF NOT NLLoadCfg(DatFile) THEN
+  BEGIN
+    CLS;
+    PrintACR('%LF%LFNODELIST.DAT not found or empty: ' + DatFile);
+    NL;
+    PauseScr(FALSE);
+    Exit;
+  END;
+
+  REPEAT
+    IF NOT NLChooseCfgFile THEN Break;
+    IF NLQuit THEN Break;
+
+    NLDonePages;
+    NLParseNodeList(NLSourceFile);
+
+    IF NLZoneCount = 0 THEN
+    BEGIN
+      CLS;
+      PrintACR('%LF%LFCould not parse nodelist: ' + NLSourceFile);
+      NL;
+      PauseScr(FALSE);
+    END
+    ELSE
+      NLBrowseZones;
+    IF NLQuit THEN Break;
+  UNTIL FALSE;
+  NLDonePages;
+  NLDoneCfg;
+END;
+
 
 END.

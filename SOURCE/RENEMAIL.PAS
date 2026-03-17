@@ -9,7 +9,7 @@ uses crt, dos, timefunc;
 {$I RECORDS.INC}
 
 type
-  Multitasker = (None, DesqView, Windows, OS2); (* Nick *)
+  Multitasker = (None, DesqView, Windows, OS2);
 
   fidorecord = record
     FromUserName : string[35];
@@ -307,7 +307,7 @@ FColor:=8;
     WriteCharXY(#205,X,4,FColor,Black);
   WriteCharXY(#185,80,4,FColor,Black);
   GetDate(Year,Month,MDay,WDay);
-  WriteStrXY(CenterStr('Renegade Echomail Interface v'+Ver),2,2,11,Black);
+  WriteStrXY(CenterStr('Renegade Echomail Interface v1.40'),2,2,11,Black);
   WriteStrXY(CenterStr('Copyright (c) 1991-'+IntToString(Year)+' The Renegade Development Team'),2,3,3,Black);
   FOR Y := 5 TO 21 DO
   BEGIN

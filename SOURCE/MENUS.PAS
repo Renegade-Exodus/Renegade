@@ -1,19 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O-,R-,S+,V-}
-{
- 10/21/2021 - Removed: Color change for input longer than 2
- 10/31/2021 - Added commands:
-                > Toggle SysOp Availability (*T)
-                > Validation Editor (*S)
-                > Color Scheme Editor (*G)
-            - Added password check for all SysOp (*) commands
- 11/15/2021 - Direct memory addressing for *T command only works in real mode (DOS)
- 04/13/2022 - Added hangup check quick fix for extra 'a' commands after timeout -- could be in MenuExec or DoMenuExec,
-              not sure if it matters ...
- 04/26/2022 - Menu command error and SysOp log now executes for all users, not just CoSysOp+
- 04/27/2022 - Menu command error messages use language file now (Invalid/NoACS)
- 09/05/2022 - Added menu command VI - scrolling text viewer
- 07/09/2023 - Added menu command 1E - OneLiner editor
-}
+
 UNIT Menus;
 
 INTERFACE
@@ -69,6 +55,7 @@ USES
   Menus2,
   Menus3,
   MiscUser,
+  Nodelist,
   MsgPack,
   Multnode,
   Offline,
@@ -819,6 +806,7 @@ BEGIN
             NoCmd := TRUE;
           END;
     'N' : CASE Cmd[2] OF
+            '+' : BrowseNodeLists;
             'A' : ToggleChatAvailability;
             'D' : DumpNode;
             'O' : BEGIN
