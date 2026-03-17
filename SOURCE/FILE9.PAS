@@ -1,10 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
 
-{
- 02/24/2022 - rewrote/simplified setfileareanewscandate -- REMOVED
- 06/05/2022 - Exo removed print new newscan date
-}
-
 UNIT File9;
 
 INTERFACE

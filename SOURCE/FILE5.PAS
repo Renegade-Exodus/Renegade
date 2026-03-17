@@ -1,8 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
-leew: searchrec var in uploadall probably needs uncommented -- test
-enter blank desc WAS = jibberish, no longer...
-}
+
 UNIT File5;
 
 INTERFACE

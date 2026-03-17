@@ -1,7 +1,4 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
- 06/13/2022 - LeeW: ln339,340,364 my bugfix attempt for batchdl error
-}
 
 UNIT File6;
 
@@ -110,6 +107,10 @@ VAR
   TransferTime: LongInt;
   AutoLogOff,
   FO: Boolean;
+  CopyPath: Str40;
+  Changed,
+  CopyFileIt: Boolean;
+  DestName: AStr;
 
   PROCEDURE AddNacc(BatchDL: BatchDLRecordType);
   BEGIN
@@ -413,6 +414,7 @@ BEGIN
     -4 : ;
     -5 : EditBatchDLQueue;
   ELSE
+  BEGIN
     IF (InCom) THEN
     BEGIN
 
@@ -795,7 +797,124 @@ BEGIN
 
       IF (AutoLogOff) THEN
         CountDown
+    END
+    ELSE IF (NOT CoSysOp) THEN
+      Exit
+    ELSE
+    BEGIN
+      CopyPath := '';
+      Changed := FALSE;
+      InputPath('%LF^2Enter the destination path (^1End with a ^2"^1\^2"):%LF^2:',
+                CopyPath,FALSE,TRUE,Changed);
+      IF (CopyPath = '') THEN
+        Exit;
+
+      Assign(BatchDLFile,General.DataPath+'BATCHDL.DAT');
+      Reset(BatchDLFile);
+      FillChar(Totals,SizeOf(Totals),0);
+
+      Totals.FilesDLRatio := 0;
+      Totals.BytesDLRatio := 0;
+      Totals.PointsDLRatio := 0;
+
+      RecNum := 1;
+      WHILE (RecNum <= FileSize(BatchDLFile)) DO
+      BEGIN
+        Seek(BatchDLFile,(RecNum - 1));
+        Read(BatchDLFile,BatchDL);
+        IF (BatchDL.BDLUserNum = UserNum) THEN
+        BEGIN
+          CopyFileIt := NOT (IsFileAttach IN BatchDL.BDLFlags);
+          DestName := CopyPath+StripName(BatchDL.BDLFileName);
+          IF CopyMoveFile(CopyFileIt,
+             AOnOff(CopyFileIt,'^0Copying ... ','^0Moving ... '),
+             BatchDL.BDLFileName,DestName,TRUE) THEN
+          BEGIN
+            Inc(Totals.FilesDL);
+            Inc(Totals.FilesDLRatio);
+            Inc(Totals.BytesDL,BatchDL.BDLFSize);
+            Inc(Totals.BytesDLRatio,BatchDL.BDLFSize);
+            Inc(Totals.PointsDL,BatchDL.BDLPoints);
+            Inc(Totals.PointsDLRatio,BatchDL.BDLPoints);
+
+            AddNacc(BatchDL);
+
+            Dec(NumBatchDLFiles);
+            Dec(BatchDLTime,BatchDL.BDLTime);
+            Dec(BatchDLSize,BatchDL.BDLFSize);
+            Dec(BatchDLPoints,BatchDL.BDLPoints);
+
+            Dec(RecNum);
+            FOR RecNum1 := RecNum TO (FileSize(BatchDLFile) - 2) DO
+            BEGIN
+              Seek(BatchDLFile,(RecNum1 + 1));
+              Read(BatchDLFile,BatchDL);
+              Seek(BatchDLFile,RecNum1);
+              Write(BatchDLFile,BatchDL);
+            END;
+            Seek(BatchDLFile,(FileSize(BatchDLFile) - 1));
+            Truncate(BatchDLFile);
+          END;
+        END;
+        Inc(RecNum);
+      END;
+
+      Close(BatchDLFile);
+      LastError := IOResult;
+
+      TransferTime := (Totals.BytesDL DIV Rate);
+
+      IF ((DownloadsToday + Totals.FilesDL) < 2147483647) THEN
+        Inc(DownloadsToday,Totals.FilesDL)
+      ELSE
+        DownloadsToday := 2147483647;
+
+      IF ((DownloadKBytesToday + (Totals.BytesDL DIV 1024)) < 2147483647) THEN
+        Inc(DownloadKBytesToday,(Totals.BytesDL DIV 1024))
+      ELSE
+        DownloadKBytesToday := 2147483647;
+
+      IF ((ThisUser.Downloads + Totals.FilesDLRatio) < 2147483647) THEN
+        Inc(ThisUser.Downloads,Totals.FilesDLRatio)
+      ELSE
+        ThisUser.Downloads := 2147483647;
+
+      IF ((ThisUser.DLToday + Totals.FilesDLRatio) < 2147483647) THEN
+        Inc(ThisUser.DLToday,Totals.FilesDLRatio)
+      ELSE
+        ThisUser.DLToday := 2147483647;
+
+      IF ((ThisUser.DK + (Totals.BytesDLRatio DIV 1024)) < 2147483647) THEN
+        Inc(ThisUser.DK,(Totals.BytesDLRatio DIV 1024))
+      ELSE
+        ThisUser.DK := 2147483647;
+
+      IF ((ThisUser.DLKToday + (Totals.BytesDLRatio DIV 1024)) < 2147483647) THEN
+        Inc(ThisUser.DLKToday,(Totals.BytesDLRatio DIV 1024))
+      ELSE
+        ThisUser.DLKToday := 2147483647;
+
+      IF ((ThisUser.FilePoints - Totals.PointsDLRatio) > 0) THEN
+        Dec(ThisUser.FilePoints,Totals.PointsDLRatio)
+      ELSE
+        ThisUser.FilePoints := 0;
+
+      LIL := 0;
+      NL;
+      Print('^1Batch download (Local Copy Totals):^0');
+      NL;
+      Star('^0Total file(s)     : ^1'+FormatNumber(Totals.FilesDL));
+      Star('^0Total size        : ^1'+ConvertBytes(Totals.BytesDL,FALSE));
+      Star('^0Total file points : ^1'+FormatNumber(Totals.PointsDL));
+      Star('^0Copy time         : ^1'+FormattedTime(TransferTime));
+
+      NL;
+      Print('^1Enjoy the file(s), '+Caps(ThisUser.Name)+'!^0');
+      PauseScr(FALSE);
+
+      SaveURec(ThisUser,UserNum);
     END;
+  END;
   END;
 END;
 

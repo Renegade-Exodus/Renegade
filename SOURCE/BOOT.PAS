@@ -1,30 +1,12 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{     (                                         }
-{    )\ )                           (           }
-{   (()/(  (         (  (  (     )  )\ )  (     }
-{    \(_))))\ (     ))\ )\))( ( /( (()/( ))\    }
-{   (_)) /((_))\ ) /((_|(_))\ )(_)) ((_))(( )   }
-{   | _ \_)) _(_/((_)) \( )(_|(_)_  _| (_))/    }
-{   |   / -_) ' \)) -_)/ _` |/ _` / _` / -_)    }
-{   |_|_\___|_||_|\___|\__, |\__,_\__,_\___|    }
-{   ------------------ |___/ ----------------   }
-{   B U L L E T I N   B O A R D   S Y S T E M   }
-{   -----------------------------------------   }
-{
-    [DONE]
-     - Removed ClrScrs so we can see what's going on during boot
-     - Added ErrorCodeHelp() function for more useful error messages
-     - nested findtasker and shareloaded in init
-     04/18/2022 replaced infield with readln
-    [TO DO]
-     -
-}
+
 UNIT Boot;
 
 INTERFACE
 
 FUNCTION ErrorCodeHelp(ErrorCode: Byte): STRING;
 PROCEDURE InitP1; { check paths }
+
 PROCEDURE Init;
 
 IMPLEMENTATION

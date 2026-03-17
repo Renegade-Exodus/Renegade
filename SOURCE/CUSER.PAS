@@ -1,25 +1,4 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
- 00/00/0000 - Added: Won't ask for forgot pw answer if question is blank
-            - Added: Almost all strings are in lang except for a few i'm still working on
-            - All CStuff calls in other units have been updated, might need to change how in some of them,
-              maint will be =1 for mandatory
-            - maxtries hangup now in lang
-            - colorscheme and screensize now have changed var
- 05/14/2022 - fixed maxtries now counts right
-            - AskName no longer lets you bypass with blank string fixed input validation
- 05/25/2022 - Added input validation to address
- 05/30/2022 - Added separate user editor prompts (EXCEPT mailbox--thats in SYSOP3)
- 06/05/2022 - Exo removed print forgot pw question
-
-
---
-TODO:
-minor aesthetic work, mostly for user editor prompts
-Update lightbarproc when datafile changes are made
-add country in userrec
-better validation for qwk & screensize
-}
 
 UNIT CUser;
 
@@ -161,6 +140,114 @@ VAR
   VAR
     TmpRealName: STRING[40];
     UNum: Integer;
+
+    FUNCTION UpperStr(S: STRING): STRING;
+    VAR
+      I: Integer;
+    BEGIN
+      FOR I := 1 TO Length(S) DO
+        S[I] := UpCase(S[I]);
+      UpperStr := S;
+    END;
+
+    FUNCTION FakeRealWord(S: STRING): Boolean;
+    BEGIN
+      S := UpperStr(S);
+      FakeRealWord :=
+        (S = 'SYSOP') OR (S = 'TEST') OR (S = 'GUEST') OR
+        (S = 'ANON') OR (S = 'UNKNOWN') OR (S = 'USER');
+    END;
+
+    FUNCTION ValidInitialFirstWord(S: STRING): Boolean;
+    VAR
+      I, Ltrs: Integer;
+    BEGIN
+      ValidInitialFirstWord := FALSE;
+      Ltrs := 0;
+      I := 1;
+      WHILE (I <= Length(S)) DO
+        BEGIN
+          IF NOT (S[I] IN ['A'..'Z','a'..'z']) THEN
+            Exit;
+          Inc(Ltrs);
+          Inc(I);
+          IF (I > Length(S)) OR (S[I] <> '.') THEN
+            Exit;
+          Inc(I);
+        END;
+      ValidInitialFirstWord := (Ltrs >= 2);
+    END;
+
+    FUNCTION ValidRealWord(S: STRING; AllowInitials: Boolean): Boolean;
+    VAR
+      I, Ltrs: Integer;
+      Ch: Char;
+    BEGIN
+      ValidRealWord := FALSE;
+      IF S = '' THEN
+        Exit;
+      IF AllowInitials AND ValidInitialFirstWord(S) THEN
+        BEGIN
+          ValidRealWord := TRUE;
+          Exit;
+        END;
+      Ltrs := 0;
+      FOR I := 1 TO Length(S) DO
+        BEGIN
+          Ch := S[I];
+          IF (Ch IN ['A'..'Z','a'..'z']) THEN
+            Inc(Ltrs)
+          ELSE IF (Ch IN ['''','-']) THEN
+            BEGIN
+              IF (I = 1) OR (I = Length(S)) THEN
+                Exit;
+              IF NOT (S[I - 1] IN ['A'..'Z','a'..'z']) THEN
+                Exit;
+              IF NOT (S[I + 1] IN ['A'..'Z','a'..'z']) THEN
+                Exit;
+            END
+          ELSE
+            Exit;
+        END;
+      IF FakeRealWord(S) THEN
+        Exit;
+      ValidRealWord := (Ltrs >= 2);
+    END;
+
+    FUNCTION ValidRealNameFmt(S: STRING): Boolean;
+    VAR
+      I, WCnt: Integer;
+      W: STRING[40];
+    BEGIN
+      ValidRealNameFmt := FALSE;
+      IF S = '' THEN
+        Exit;
+      WCnt := 0;
+      W := '';
+      FOR I := 1 TO Length(S) DO
+        BEGIN
+          IF (S[I] = ' ') THEN
+            BEGIN
+              IF W <> '' THEN
+                BEGIN
+                  Inc(WCnt);
+                  IF NOT ValidRealWord(W,(WCnt = 1)) THEN
+                    Exit;
+                  W := '';
+                END;
+            END
+          ELSE
+            W := W + S[I];
+        END;
+      IF W <> '' THEN
+        BEGIN
+          Inc(WCnt);
+          IF NOT ValidRealWord(W,(WCnt = 1)) THEN
+            Exit;
+        END;
+      ValidRealNameFmt := (WCnt >= 2);
+    END;
+
   BEGIN
     Done1 := TRUE;
     IF (How = 1) THEN
@@ -186,16 +273,20 @@ VAR
     WHILE (TmpRealName[Length(TmpRealName)] = ' ') DO
       Dec(TmpRealName[0]);
 
-    IF (TmpRealName='') OR ((Pos(' ',TmpRealName) = 0) AND (How <> 3)) THEN
+    IF (How <> 3) THEN
       BEGIN
-        Done1 := FALSE;
-        IF (How<>3) THEN
+        IF NOT ValidRealNameFmt(TmpRealName) THEN
           BEGIN
-            Print(^G+lRGLngStr(156,TRUE)); {"First and last!"}
-            SL1('Invalid real name: '+TmpRealName+' (single word)' );
+            Done1 := FALSE;
+			{Print(^G+'Enter first and last name.');
+            Print('No initials-only names, numbers, or fake names.');}
+            SL1('Invalid real name: '+TmpRealName+' (format)' );
           END;
       END
-    ELSE
+    ELSE IF (TmpRealName = '') THEN
+      Done1 := FALSE;
+
+    IF (Done1) THEN
       BEGIN
         UNum := SearchUser(TmpRealName,TRUE);
         IF (UNum > 0) AND (UNum <> UserNum) THEN

@@ -1,7 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
-    LeeW: exo says this is getting stuck in loop - investigate
-}
+
 UNIT File3;
 
 INTERFACE

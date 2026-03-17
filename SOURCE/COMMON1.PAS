@@ -1,9 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S-,V-}
-{
-11/4/2021 - moved input procs to COMMON3
-          - Won't ask for sysop pw if blank
-          - indentation
-}
+
 UNIT Common1;
 
 INTERFACE

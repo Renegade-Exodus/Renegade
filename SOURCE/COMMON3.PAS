@@ -1,36 +1,4 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S-,V-,X-}
-{
- 10/21/2021 - Updated color codes
- 11/04/2021 - Remove redundant procs ...
-            - Removed InputWC, now using InputMain with [ColorAllowed] param
-            - Removed InputCaps
-            - Removed InputL, now using InputMain with no param
- 11/05/2021 - Removed Input, now using InputMain with [CapAll] param
-            - Removed Local_OneK (was unused)
-            - Moved Local_Input1 to COMMON2 (nested in lStatus_screen)
-            - Converted all OneK to LOneK, same proc except prompt string
-            - Converted all GetPassword calls to InputMain with [IsPassword] param
- 11/18/2021 - Increased all numeric string lengths by 1 to account for possible negatives needing extra char for "-"
-            - InputMain increases MaxLen by 1 if AllowNegative
-            - InputMain prints MPL unless NoInputField specified (Can remove MPL from everywhere, some places will need added)
-            - If InteractiveEdit specified, and no ANSI, now prints current val like DisplayValue flag used to
- 11/20/2021 - Removed all WOC input procs and converted all calls (UGH!)
-            - InputMain - ESC now aborts
- 11/21/2021 - Removed InputDefault, now using InputString
-            - Removed all redundant MPL calls (UGH!)
- 11/22/2021 - OneK1 is now InputChar, now uses InputFlags -- supports CapAll,NoInputField,NoLineFeed, ...
-            - Removed DisplayKey param from InputChar (was unused)
-            - Replaced all calls to LOneK to InputChar (UGH!)
- 04/26/2022 - Cleaning up InputPath
- 04/22/2023 - Creating NewInput ...
-
-[TODO]
- - add inputvalidation for inputformatted, maybe have it pass '' if incomplete? --PARAMS for AllowIncomplete
- - inputflags : add different types like dir, filename etc, notabortable, askblank
- - SHOULD BLANK PROMPT BE IN MAIN OR PRINTSTRING--main
-[NOTES]
- - AFTER MPL MUST RESET COLOR TO 0 USERCOLOR(0);
-}
 
 { Byte = 0 .. 255 | Integer = -32768 .. 32767 | LongInt = -2147483648 .. 2147483647 | Word = 0 .. 65535 }
 

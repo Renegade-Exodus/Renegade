@@ -1,10 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S-,V-}
-{
- 11/05/2021 - Nested Local_Input1 in lStatus_screen
- 04/15/2022 - alt+s no more, alt-c will use whichever chat is configured as default (as long as ansiok)
- 03/15/2023 - indented
-            - nested gp in shd
-}
+
 UNIT Common2;
 
 INTERFACE

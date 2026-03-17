@@ -120,16 +120,16 @@ end;
 
 BEGIN
   ClrScr;
-  WriteLn('Renegade Version 1.35/DOS Install Utility');
+  WriteLn('Renegade Version 1.40/DOS Install Utility');
   WriteLn;
-  WriteLn('This utility will install Renegade BBS Version 1.35/DOS.');
+  WriteLn('This utility will install Renegade BBS Version 1.40/DOS.');
   WriteLn('Please make sure that PKUNZIP.EXE and this file are located');
   WriteLn('in the same directory as the archive RGFULL.ZIP.');
   Writeln;
   WriteLn('You will only be asked to enter the main path for the BBS');
   WriteLn('directory.');
   WriteLn;
-  IF PYNQ('Install Renegade BBS Version 1.35/DOS? ') THEN
+  IF PYNQ('Install Renegade BBS Version 1.40/DOS? ') THEN
   BEGIN
     Writeln;
     WriteLn('Please enter main path for the bbs (Example: D:\RENEGADE)');
@@ -188,7 +188,7 @@ BEGIN
         Read(GeneralFile,General);
         WITH General Do
         BEGIN
-          General.Version := '1.35/DOS';    (* <-- Update this with version *)
+          General.Version := '1.40/DOS';    (* <-- Update this with version *)
           DataPath := S+'\DATA\';
           MiscPath := S+'\MISC\';
           MsgPath  := S+'\MSGS\';

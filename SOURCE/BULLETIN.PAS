@@ -1,18 +1,7 @@
 {$A+,B-,D-,E-,F+,I-,L-,N-,O+,R-,S+,V-}
+
 UNIT Bulletin;
-{
-Lee Woodridge
- 09/28/2021 - Fixed last caller ~TO MCI. Now displays "-" if user hasn't logged off yet
- 11/18/2021 - Fixed bug where rgquote wasn't displaying fallback text if artfile existed but no ansi
-            - Header and footer for quote now use standardized format, like automsg and oneliners
- 11/20/2021 - moved findonlyonce to maint, nested in logonmaint
- 12/10/2021 - fixed case issue for ~to and ~tl in lastcaller mci, MAYBE
- 04/18/2022 - Cleaned up IF statements in RGQuote
-            - Added ACS check
- [NOTES]
- - should we combine rgquote to rgquote.pas??
- - Add breakdown of active/inactive users at end of list
-}
+
 INTERFACE
 
 USES

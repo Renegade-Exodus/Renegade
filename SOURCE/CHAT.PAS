@@ -1,26 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
 
-{
-Lee Woodridge
- 09/20/2021 - Combined line & splitscreen chat into CHAT.PAS
- 10/03/2021 - Changed header for chatlog
-            - splitchat: Fixed vertical positioning for user and sysop, now they stay inside their lines
-              (had to toggle statusbar off and on to keep it from messing positioning up,
-              need to figure out actual fix for this because it affects a lot more than just this)
-            - splitchat: carriage return now scrolls down instead of clearing everything
-            - splitchat: changed border style
- 10/11/2021 - splitchat: Ctrl+G now does what it says - disconnects, instead of bell
-            - splitchat: Ctrl+P now pages, same as linechat
-            - moved ansig and clear_eol to COMMON
- 10/16/2021 - Answering chat call will use splitchat if user has ANSI support, linechat otherwise
- 10/16/2021 - SysOp can now display file when chatting with user. ONLY sysop can execute the cmd, not user.
-              before was only allowing /type cmd if chatting with sysop
-            - Added "Buf := ^M" after line/split chat exit, is equiv to pressing enter after chat to refresh screen
-              maybe there's a better way to do this??? should keep eye on it incase unintended consequences
-                - skips to next if reading messages, same behavior for file listing expected
- 04/15/2022 - added check for defsplitchat
-}
-
 UNIT Chat;
 
 INTERFACE

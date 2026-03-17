@@ -1411,8 +1411,10 @@ END;
         IF (NumBatchDLFiles = 0) THEN
         BEGIN
           NL;
-          Print('^8Batch queue is empty.^0');
-        END
+		  PrintF('BATCHEMP');
+          IF (NoFile) THEN 
+		  Print('%CL %LF %LF %LF ^8Batch queue is empty.^0');
+          END
         ELSE
         BEGIN
           CLS;

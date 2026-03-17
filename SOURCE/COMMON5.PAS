@@ -1,10 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S-,V-}
-{
- 12/16/2021 Colors now use scheme colors for lightbar selected, unselected confd in file area list config
- removed ansig, in common
 
- okansi check for lightbars????
-}
 UNIT Common5;
 
 INTERFACE

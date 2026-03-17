@@ -1,62 +1,5 @@
 {$A+,B-,D-,E-,F+,I-,L-,N+,O-,R-,S-,V-}
-(*
-Lee Woodridge
- 10/04/2021 - Removed: RGSysCfgStr function
-            - Removed: MCIs that were added for system config & file area editor
-            - Documented: All current MCIs in code - see DOCS\MCI.TXT
- 10/06/2021 - Fixed: %DE bug
- 10/07/2021 - Indentation...
-            - Added: ACS 'Q' check for menu #
-            - Removed: Redundant $V- above LCmds3
-            - Added: Toggle proc instead of writing "x := not x" everywhere
-            - Added: Linefeed to MPL if input field would extend past users LineLen
- ...        - Added: MCIPos/MCIPosArray to pull location data from ANSIs
- 10/26/2021 - Fixed: lightbar yes/no question no longer eats itself if color codes/MCIs in string
- 10/27/2021 - Moved: TeleconfCheck to MULTNODE
- 10/31/2021 - Added: LangStringArray to pass strings to lang file
-            - Added: %SA MCI - returns "available" or "unavailable" depending on SysOp chat availability
- 11/01/2021 - Removed: RGNote, RGMain - All strings now in lRGLngStr
- 11/03/2021 - moved savendescription to its proc, no need to be global
- 11/04/2021 - Nested ChInKey in GetKey since its the only proc that calls it
-            - Sorting funcs and procs ...
-            - Moved input procs to COMMON3 -- More to do still
-            - dielater const/killme pointer commented out, does nothing afaik
-            - %TU reporting +1 extra user. maybe counting new user config? fixed?
-            - %SC reporting +1 more caller, fixed?
- 11/05/2021 - Removed ReDisplay from inputflags, unused, seems useless
-              Added IsPassword inputflag, masks input, replaces getpassword proc
- 11/11/2021 - Removed HungUp, was nonfunctional,
- 11/16/2021 - Cleaned up PrintF proc, fixed bug where wasnt reporting nofile correctly
-            - Cleaned up PrintFile, removed non-ANSI files, as we're removing
- 11/18/2021 - Removed YN proc, now just PYNQ -- MAXLEN PARAM CAN BE REMOVED, LOTS OF FILES TO EDIT IT OUT OF
-            - removed all instances of [displayvalue] from input cmds, and replaced with interactiveedit
-               if interactiveedit is used and user no support ansi then it will show current value at end of prompt "...[123]"
- 11/23/2021 - Increased number parameter of plural from byte to integer
- 04/15/2022 - Added SysOp log timestamps toggle
- 04/21/2022 - Nested GetC inside SetC since it's the only proc that calls it
- 06/05/2022 - Exo added %EP null pause -- LeeW: I switched to getkey because readkey don't read remote input
- 07/31/2022 - Removed usercolor cmds from prt
- 02/17/2023 - Multi-node and SysOp "Available/Unavailable" strings now in language file
- 02/19/2023 - MyDelay proc commented out, UNUSED
-            - Now using ConvertKB for Downloaded/Uploaded xB MCI for "1GB" instead of "1,048,576kB"
-                -- We should probably be using this EVERYWHERE, no?
- 02/20/2023 - Moved OneLiners record variables here from ONELINERS.PAS
- 03/08/2023 - Added Cursor proc, toggles cursor display locally AND remotely, nested local CursorOn assembly code from myIO in
- 03/09/2023 - Moved ShowColors from here to SysOp2J
- 01/25/2024 - Removed LastWFCX,Y = UNUSED
- 01/27/2024 - Added horizontal divider to LCmds if both parameters are '-'
 
- [NOTES]
- - add star char to lang
- - can we remove all references to #29 (group separator)?
- - remove emulation checks other than ANSI
- - remove cursor asm, replace with pascal cursoron,off
- - messing with ANSIG/PageLength ... check pagelength for wrong positioning
- - Clean up SetC/GetC
- - inputmessage linelen param should be 79??? or 80 ... is 78
- [TODO]
- - use messages for common stuff, first last, none etc
-*)
 UNIT Common;
 
 INTERFACE
@@ -4438,12 +4381,12 @@ BEGIN
       WITH ThisUser DO
         CASE UpCase(S[Index + 1]) OF
           'A' : CASE UpCase(S[Index + 2]) OF
-                  {
+                  
                   '1' : Add := IntToStr(LowFileArea);
                   '2' : Add := IntToStr(HighFileArea);
                   '3' : Add := IntToStr(LowMsgArea);
                   '4' : Add := IntToStr(HighMsgArea);
-                  }
+                
                   'B' : Add := FormatNumber(lCredit - Debit);
                   'D' : Add := Street;
                   'O' : BEGIN

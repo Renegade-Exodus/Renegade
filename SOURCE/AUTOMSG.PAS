@@ -1,12 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
-Lee Woodridge
- 10/07/2021 - Indented
-            - AUTO.ASC renamed to AUTOM.ASC to keep with standard filenaming convention
-            - Now uses AUTOH.EXT/AUTOT.EXT, if available
-            - All strings in RGLNG
- 11/10/2021 - added hangup checks to loops to prevent lockups
-}
+
 UNIT AutoMsg;
 
 INTERFACE

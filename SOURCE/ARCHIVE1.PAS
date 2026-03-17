@@ -1,7 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
- 03/09/2023 - Error messages now using Messages PROC
-}
+
 UNIT Archive1;
 
 INTERFACE

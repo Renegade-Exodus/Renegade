@@ -352,7 +352,7 @@ BEGIN
           ' '+PadRightStr(FormatNumber(TotalCompSize),13)+
           ' '+PadRightInt(Ratio,2)+
           '%                            ^1'+IntToStr(NumFiles)+' '+Plural('file',NumFiles);
-  PrintACR('|01ÄÄÄÄÄÄÄÄÄÄÄÄÄ ÄÄÄÄÄÄÄÄÄÄÄÄÄ ÄÄÄ                            ÄÄÄÄÄÄÄÄÄÄÄÄ');
+  PrintACR('|01                              ');
            
   PrintACR(OutP);
 END;
@@ -1153,7 +1153,7 @@ VAR
     CLS;
     Print('|15Archive File View: |11'+Title);
     Print('|09Up/Down  Home/End  ESC=Back');
-    Print('|09'+ 'ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ');
+    Print('|09'+ '');
                   
   END;
 
@@ -1568,7 +1568,7 @@ BEGIN
   END;
 
 
-  ViewFileScroll(ViewFN,InnerName);
+  ViewAnsiFile(ViewFN, InnerName);
   PurgeDir(ArcLevelDir(ArcNestLevel+1),FALSE);
 END;
 
@@ -1618,7 +1618,7 @@ BEGIN
       CLS;
       PrintACR('^1Archive Browser: ^2'+StripName(ArcFN));
       PrintACR('^2Up/Down PgUp/PgDn  ^1ENTER^2=View  ^1ESC^2=Exit');
-      PrintACR('|01ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ');
+      PrintACR('|01');
       { Header (absolute columns to keep alignment perfect) }
       ANSIG(1,4); Prt('|08|16'+PadRightStr('',79));
       Prt('|07|16' + PadRightStr('',79));
@@ -1629,7 +1629,7 @@ BEGIN
       ANSIG(41,4); Prt('|09|16Full Name');
 
       ANSIG(1,5); Prt('|08|16'+PadRightStr('',79));
-      Prt('|01ÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄÄ');
+      Prt('|01');
 
 	  
       FOR I := 0 TO PerPage-1 DO

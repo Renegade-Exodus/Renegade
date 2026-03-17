@@ -1,14 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
-LeeW
- 09/21/2021 - Fixed move file operation so rg no longer creates dupe description on failure
 
- inputmain for filepoints different field lengths???
- 11/11/2021 changed max filepoint cost to 32767
-
-
- ln341 finish nicely
-}
 UNIT File10;
 
 INTERFACE
