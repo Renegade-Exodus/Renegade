@@ -1,10 +1,5 @@
 {$A+,B-,D-,E-,F+,I-,L-,N-,O+,R-,S+,V-}
-{
-Lee Woodridge
- 09/24/2021 - Added ConfigHeader procedure
- 10/21/2021 - Updating color codes
- 02/17/2023 - Changed ConfigHeader parameters
-}
+
 UNIT SysOp2; { System Configuration Main Menu }
 
 INTERFACE

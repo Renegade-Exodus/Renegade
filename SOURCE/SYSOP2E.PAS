@@ -2,14 +2,6 @@
 
 { System Configuration - System Flagged Functions }
 
-(*  1.  Add checking for deleted users or forwarded mail to new user letter config --i think searchusers does*)
-{
- 12/02/2021 - combined timeout warning/logoff
-            - combined lightbar toggles, now only 1 for all system lightbars
- 04/26/2022 - testing out multi-page menu system
-}
-
-
 UNIT SysOp2E;
 
 INTERFACE

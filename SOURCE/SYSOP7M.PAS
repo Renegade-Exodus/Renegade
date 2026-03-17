@@ -1,10 +1,5 @@
 {$A+,B+,D+,E+,F+,I+,L+,N-,O+,R-,S+,V-}
-{
- 03/09/2023 - Aesthetic updates
-            - Error messages now using Messages PROC
- 01/20/2024 - Fixed prompt colors (there's probably more still...)
- 01/29/2024 - Prompt,Help aesthetics
-}
+
 UNIT SysOp7M;
 
 INTERFACE
@@ -110,6 +105,25 @@ VAR
       END;
   END;
 
+  PROCEDURE MakeRoomAt(RecNumToInsertBefore,InsertNum: Integer);
+  VAR
+    RecNum: Integer;
+  BEGIN
+    FOR RecNum := 1 TO InsertNum DO
+      BEGIN
+        Seek(MenuFile,FileSize(MenuFile));
+        Write(MenuFile,MenuR);
+      END;
+    FOR RecNum := ((FileSize(MenuFile) - 1) - InsertNum) DOWNTO
+                  RecNumToInsertBefore DO
+      BEGIN
+        Seek(MenuFile,RecNum);
+        Read(MenuFile,MenuR);
+        Seek(MenuFile,(RecNum + InsertNum));
+        Write(MenuFile,MenuR);
+      END;
+  END;
+
   FUNCTION GetRecNum(NumCmds: Integer): Integer;
   VAR
     R: REAL;
@@ -170,40 +184,80 @@ VAR
     ELSE
     BEGIN
       RecNumToInsertBefore := -1;
-      InputInteger('%LFCommand to insert before?',RecNumToInsertBefore,[NumbersOnly],1,
-                     (CmdNumArray[MenuToModify]+1),Changed);
-      IF (RecNumToInsertBefore >= 1) AND (RecNumToInsertBefore <= (CmdNumArray[MenuToModify] + 1)) THEN
+      InputInteger('%LFCommand to insert before?',RecNumToInsertBefore,
+                   [NumbersOnly],1,(CmdNumArray[MenuToModify] + 1),Changed);
+      IF (RecNumToInsertBefore >= 1) AND
+         (RecNumToInsertBefore <= (CmdNumArray[MenuToModify] + 1)) THEN
       BEGIN
         InsertNum := 1;
         InputInteger('%LFInsert how many commands?',InsertNum,
-                        [InteractiveEdit,NumbersOnly],1,(MaxCmds - CmdNumArray[MenuToModify]),Changed);
-        IF (InsertNum < 1) OR (InsertNum > (MaxCmds - CmdNumArray[MenuToModify])) THEN
+                     [InteractiveEdit,NumbersOnly],1,
+                     (MaxCmds - CmdNumArray[MenuToModify]),Changed);
+        IF (InsertNum < 1) OR
+           (InsertNum > (MaxCmds - CmdNumArray[MenuToModify])) THEN
           InsertNum := 1;
         Print('%LF[> Inserting '+IntToStr(InsertNum)+' commands.');
         SysOpLog('* Inserted '+IntToStr(InsertNum)+' commands.');
-        RecNumToInsertBefore := (MenuRecNumArray[MenuToModify] + RecNumToInsertBefore);  { Convert To Real Record Number }
-        FOR RecNum := 1 TO InsertNum DO
-        BEGIN
-          Seek(MenuFile,FileSize(MenuFile));
-          Write(MenuFile,MenuR);
-        END;
-        FOR RecNum := ((FileSize(MenuFile) - 1) - InsertNum) DOWNTO RecNumToInsertBefore DO
-        BEGIN
-          Seek(MenuFile,RecNum);
-          Read(MenuFile,MenuR);
-          Seek(MenuFile,(RecNum + InsertNum));
-          Write(MenuFile,MenuR);
-        END;
+        RecNumToInsertBefore :=
+          (MenuRecNumArray[MenuToModify] + RecNumToInsertBefore);
+        MakeRoomAt(RecNumToInsertBefore,InsertNum);
         InitCommandVars(MenuR);
-        FOR RecNum := RecNumToInsertBefore TO ((RecNumToInsertBefore + InsertNum) - 1) DO
-        BEGIN
-          Seek(MenuFile,RecNum);
-          Write(MenuFile,MenuR);
-        END;
+        FOR RecNum := RecNumToInsertBefore TO
+                      ((RecNumToInsertBefore + InsertNum) - 1) DO
+          BEGIN
+            Seek(MenuFile,RecNum);
+            Write(MenuFile,MenuR);
+          END;
         LoadMenuPointers;
         LastError := IOResult;
       END;
     END;
+  END;
+
+  PROCEDURE CopyCommand;
+  VAR
+    SrcCmd,
+    DestCmd,
+    SrcRec,
+    DestRec: Integer;
+    SrcCmdR: MenuRec;
+  BEGIN
+    IF (CmdNumArray[MenuToModify] = 0) THEN
+      Messages(4,0,'commands')
+    ELSE IF (CmdNumArray[MenuToModify] = MaxCmds) THEN
+      Messages(5,MaxCmds,'commands')
+    ELSE
+      BEGIN
+        SrcCmd := -1;
+        InputInteger('%LFCopy which command?',SrcCmd,[NumbersOnly],1,
+                     CmdNumArray[MenuToModify],Changed);
+        IF (SrcCmd < 1) OR (SrcCmd > CmdNumArray[MenuToModify]) THEN
+          Exit;
+        DestCmd := -1;
+        InputInteger('%LFCopy before which command?',DestCmd,[NumbersOnly],1,
+                     (CmdNumArray[MenuToModify] + 1),Changed);
+        IF (DestCmd < 1) OR (DestCmd > (CmdNumArray[MenuToModify] + 1)) THEN
+          Exit;
+        SrcRec := MenuRecNumArray[MenuToModify] + SrcCmd;
+        DestRec := MenuRecNumArray[MenuToModify] + DestCmd;
+        Seek(MenuFile,SrcRec);
+        Read(MenuFile,SrcCmdR);
+        Print('%LFCommand: ^1'+SrcCmdR.LDesc[1]);
+        IF PYNQ('%LFCopy this command? ',0,FALSE) THEN
+          BEGIN
+            Print('%LF[> Copying command record ...');
+            SysOpLog('* Copied command: ^1'+SrcCmdR.LDesc[1]);
+            MakeRoomAt(DestRec,1);
+            IF (SrcRec >= DestRec) THEN
+              Inc(SrcRec);
+            Seek(MenuFile,SrcRec);
+            Read(MenuFile,MenuR);
+            Seek(MenuFile,DestRec);
+            Write(MenuFile,MenuR);
+            LoadMenuPointers;
+            LastError := IOResult;
+          END;
+      END;
   END;
 
   PROCEDURE ModifyCommand;
@@ -449,8 +503,9 @@ BEGIN
       MCIAllowed := TRUE;
     END;
     NL;
-    InputChar('^2Command Editor [^1DILMPS^2,(^1?^2)Help,(^1Q^2)uit]: ',Cmd,'DILMPS?Q'^M,[CapAll]);
+    InputChar('^2Command Editor [^1CDILMPS^2,(^1?^2)Help,(^1Q^2)uit]: ',Cmd,'CDILMPS?Q'^M,[CapAll]);
     CASE Cmd OF
+      'C' : CopyCommand;
       'D' : DeleteCommand;
       'I' : InsertCommand;
       'L' : BEGIN
@@ -477,10 +532,10 @@ BEGIN
             END;
       '?' : BEGIN
               Print('%LF^0<^1CR^0>Redisplay screen');
-              LCmds(20,1,'Delete command','Insert command');
-              LCmds(20,1,'Long generic menu','Modify commands');
-              LCmds(20,1,'Position command','Quit');
-              LCmds(20,1,'Short generic menu','');
+              LCmds(20,1,'Copy command','Delete command');
+              LCmds(20,1,'Insert command','Long generic menu');
+              LCmds(20,1,'Modify commands','Position command');
+              LCmds(20,1,'Quit','Short generic menu');
             END;
     END;
   UNTIL (Cmd = 'Q') OR (HangUp);

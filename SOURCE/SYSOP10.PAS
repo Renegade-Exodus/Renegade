@@ -1,13 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
- 11/24/2021 - Added 2ND line of question to list
-            - List aesthetics
- 11/25/2021 - Changed list lengths, verify
- 01/25/2024 - Aesthetics (prompts,help,headers)
- 01/27/2024 - Added question to topic choice editor
-            - Indented
- 01/29/2024 - Prompt,Help aesthetics
-}
+
 UNIT SysOp10; { Voting Editor }
 
 INTERFACE

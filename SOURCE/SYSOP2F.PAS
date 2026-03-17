@@ -1,7 +1,5 @@
 {$A+,B-,D-,E-,F+,I-,L-,N-,O+,R-,S+,V-}
-{
-indent
-}
+
 UNIT SysOp2F;
 
 INTERFACE

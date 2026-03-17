@@ -1258,10 +1258,7 @@ BEGIN
   FOR I := 1 TO Length(UExt) DO
     UExt[I] := UpCase(UExt[I]);
 
-  IF (UExt = '.ANS') OR (UExt = '.ASC') THEN
-    ViewAnsiFile(FSpec, Title)
-  ELSE
-    ViewFileScroll(FSpec, Title);
+  ViewAnsiFile(FSpec, Title); { unified viewer for ANSI and text }
 END;
 
 PROCEDURE TEdit1;

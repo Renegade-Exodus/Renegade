@@ -18,7 +18,7 @@ PROCEDURE ChangeUser;
 VAR
   UNum: Integer;
 BEGIN
-  lFindUserWS(UNum); {LeeW: Changed -- was FindUser(UNum);}
+  lFindUserWS(UNum); 
   IF (UNum >= 1) THEN
     BEGIN
       SaveURec(ThisUser,UserNum);

@@ -1,9 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
- 10/20/2021 - Color config now uses byte color instead of caret codes
-            - Aesthetic changes
-            - code cleanup
-}
+
 UNIT SysOp2H;
 
 INTERFACE

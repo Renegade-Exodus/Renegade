@@ -1,33 +1,5 @@
 {$A+,B-,D+,E-,L+,I-,L+,N-,O+,R-,S+,V-}
-{     (                                         }
-{    )\ )                           (           }
-{   (()/(  (         (  (  (     )  )\ )  (     }
-{    \(_))))\ (     ))\ )\))( ( /( (()/( ))\    }
-{   (_)) /((_))\ ) /((_|(_))\ )(_)) ((_))(( )   }
-{   | _ \_)) _(_/((_)) \( )(_|(_)_  _| (_))/    }
-{   |   / -_) ' \)) -_)/ _` |/ _` / _` / -_)    }
-{   |_|_\___|_||_|\___|\__, |\__,_\__,_\___|    }
-{   ------------------ |___/ ----------------   }
-{   B U L L E T I N   B O A R D   S Y S T E M   }
-{   -----------------------------------------   }
-{
-    [DONE]
-     10/13/2021 - Moved teleconference strings to RGMain lang
-     10/17/2021 - Added changed checks to some options
-                - Changed menu options order, aesthetic redesign
-                - Indent, Clean-up, etc
-                - updated color codes to new scheme format
-                - can now scroll through the nodes with "[" and "]",
-                - Added "?" help cmd
-                - Moving fore and back in nodes or quitting will prompt you to save if you made changes
-                - Advancing to a node that doesn't exist will now prompt to add.
-                  If yes, it copies the previous nodes data file
-                - Error messages now using Messages proc in COMMON
-    [TODO]
-     - maybe could add cmd to delete node?
-     - maybe could scan files incase nodes are no linear ie. node1 exist, node2 doesn't, node3 does
-     - maybe do first, last, jumpto
-}
+
 UNIT SysOp2B;
 
 INTERFACE

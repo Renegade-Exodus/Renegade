@@ -1,29 +1,4 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{     (                                         }
-{    )\ )                           (           }
-{   (()/(  (         (  (  (     )  )\ )  (     }
-{    \(_))))\ (     ))\ )\))( ( /( (()/( ))\    }
-{   (_)) /((_))\ ) /((_|(_))\ )(_)) ((_))(( )   }
-{   | _ \_)) _(_/((_)) \( )(_|(_)_  _| (_))/    }
-{   |   / -_) ' \)) -_)/ _` |/ _` / _` / -_)    }
-{   |_|_\___|_||_|\___|\__, |\__,_\__,_\___|    }
-{   ------------------ |___/ ----------------   }
-{   B U L L E T I N   B O A R D   S Y S T E M   }
-{   -----------------------------------------   }
-{
-    [DONE]
-     - Removed all strings from FAE language file and the proc
-     - Removed all MCIs from FAEMCI and the proc
-     - 12/8/2021 deleting file area reports correct name/sysop log
-     - file area list prints to bottom of pagelen now
-     - 't' to toggle display is now working again
-     - 03/09/2023 error messages now using messages proc
-     - aesthetic changes
- 01/29/2024 - Prompt,Help aesthetics
-    [TO DO]
-     - aesthetics
-     - test fa list longer than 1 page for pagination
-}
 
 UNIT SysOp9; { File Area Editor }
 

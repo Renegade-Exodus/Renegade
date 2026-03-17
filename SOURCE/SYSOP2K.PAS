@@ -1,13 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
- 03/09/2023 - Error messages now using Messages() procedure
- 06/01/2023 - Aesthetics, Indentation
- 01/29/2024 - Prompt,Help aesthetics
- 
- [TO-DO]
-  - Add position command
- 
-}
+
 UNIT SysOp2K;
 
 INTERFACE

@@ -1,9 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
-change info showed in list... no warn, maybe
- 01/29/2024 - Indenting....
- 01/29/2024 - Prompt,Help aesthetics
-}
+
 UNIT SysOp6;
 
 INTERFACE

@@ -1,24 +1,4 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{     (                                         }
-{    )\ )                           (           }
-{   (()/(  (         (  (  (     )  )\ )  (     }
-{    \(_))))\ (     ))\ )\))( ( /( (()/( ))\    }
-{   (_)) /((_))\ ) /((_|(_))\ )(_)) ((_))(( )   }
-{   | _ \_)) _(_/((_)) \( )(_|(_)_  _| (_))/    }
-{   |   / -_) ' \)) -_)/ _` |/ _` / _` / -_)    }
-{   |_|_\___|_||_|\___|\__, |\__,_\__,_\___|    }
-{   ------------------ |___/ ----------------   }
-{   B U L L E T I N   B O A R D   S Y S T E M   }
-{   -----------------------------------------   }
-{
-    [DONE]
-     - new user message user config now users lfinduserws
-    [TO DO]
-     - Allow toggle of new user application message to be mandatory or optional
-     ''+PadRightStr('',23)+AOnOff((NewAppMsgMandatory),'Mandatory','Optional')
-     - birthdate/ph# validation at logon bypass if set to '' but require to update -- is this fixed???
-
-}
 
 UNIT SysOp2M; { New User Application Questions Toggles }
 

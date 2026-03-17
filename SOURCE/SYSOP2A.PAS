@@ -1,10 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
-Lee Woodridge
- 09/23/2021 - Removed all strings from lang file
-            - Removed all MCIs
- 10/04/2021 - Indented everything
-}
+
 UNIT SysOp2A;
 
 INTERFACE

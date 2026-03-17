@@ -1,8 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
- 03/09/2023 - Error messages now using Messages PROC
- 01/29/2024 - Prompt,Help aesthetics
-}
+
 UNIT SysOp1;
 
 INTERFACE

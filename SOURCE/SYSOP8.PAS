@@ -1,25 +1,4 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{     (                                         }
-{    )\ )                           (           }
-{   (()/(  (         (  (  (     )  )\ )  (     }
-{    \(_))))\ (     ))\ )\))( ( /( (()/( ))\    }
-{   (_)) /((_))\ ) /((_|(_))\ )(_)) ((_))(( )   }
-{   | _ \_)) _(_/((_)) \( )(_|(_)_  _| (_))/    }
-{   |   / -_) ' \)) -_)/ _` |/ _` / _` / -_)    }
-{   |_|_\___|_||_|\___|\__, |\__,_\__,_\___|    }
-{   ------------------ |___/ ----------------   }
-{   B U L L E T I N   B O A R D   S Y S T E M   }
-{   -----------------------------------------   }
-{
-    [DONE]
-     10/20/2021 - Color config now uses pipe code instead of caret codes -- Should we make it possible to use either?
-     11/10/2021 - Changed default new base configuration -- SysOp ACS and colors
-                - Added submenu for color configuration
-     04/04/2022 - Fix page length
-     04/15/2022 - Change 'Q' flag to say 'Allow TagLine', since it doesn't seem to have any affect on quoting
-    [TO-DO]
-     - ...
-}
 
 UNIT SysOp8;
 

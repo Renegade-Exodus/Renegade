@@ -1,10 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
- 10/21/2021 - Added desc to color scheme #s
- 03/09/2023 - Nested ShowColors in ColorConfig proc
- 03/09/2023 - Error messages now using Messages PROC
- 01/29/2024 - Prompt,Help aesthetics
-}
+
 UNIT SysOp2J;
 
 INTERFACE

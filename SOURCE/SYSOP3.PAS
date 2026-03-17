@@ -1,11 +1,5 @@
 {$A+,B-,D+,E-,F+,I-,L+,N-,O+,R-,S+,V-}
-{
- 00/00/0000 - Expanded clear field options
- 00/00/0000 - If no separate log file, prompt to view normal SysOp log
- 05/25/2022 - Username and RealName don't use CStuff if editing new user profile
- 02/17/2023 - added IsActive func - LastOn date will indicate active/inactive user based on configuration in system variables
- 03/06/2023 - Attributes deleted users one-liners to new user template (which displays as anonymous)
-}
+
 UNIT SysOp3;
 
 INTERFACE

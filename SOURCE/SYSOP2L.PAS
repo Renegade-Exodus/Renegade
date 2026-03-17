@@ -1,7 +1,5 @@
 {$A+,B-,D-,E-,F+,I-,L-,N-,O+,R-,S+,V-}
-{
-everything
-}
+
 UNIT SysOp2L;
 
 INTERFACE

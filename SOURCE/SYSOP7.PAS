@@ -1,12 +1,5 @@
 {$A+,B+,D+,E+,F+,I+,L+,N-,O+,R-,S+,V-}
-{
- 12/17/2021 - aesthetic changes
- 03/09/2023 - Error messages now using Messages PROC
- 01/29/2024 - Indented
- 01/29/2024 - Prompt,Help aesthetics
 
-menu titles not saving if last line blank
-}
 UNIT SysOp7;
 
 INTERFACE
@@ -218,6 +211,42 @@ VAR
     END;
   END;
 
+  FUNCTION NextMenuNum: Integer;
+  VAR
+    RecNum,
+    TempNextMenuNum: Integer;
+  BEGIN
+    TempNextMenuNum := 0;
+    Reset(MenuFile);
+    FOR RecNum := 1 TO NumMenus DO
+      BEGIN
+        Seek(MenuFile,MenuRecNumArray[RecNum]);
+        Read(MenuFile,MenuR);
+        IF (MenuR.MenuNum > TempNextMenuNum) THEN
+          TempNextMenuNum := MenuR.MenuNum;
+      END;
+    NextMenuNum := (TempNextMenuNum + 1);
+  END;
+
+  PROCEDURE MakeRoomAt(RecNumToInsertBefore,InsertNum: Integer);
+  VAR
+    RecNum: Integer;
+  BEGIN
+    FOR RecNum := 1 TO InsertNum DO
+      BEGIN
+        Seek(MenuFile,FileSize(MenuFile));
+        Write(MenuFile,MenuR);
+      END;
+    FOR RecNum := ((FileSize(MenuFile) - 1) - InsertNum) DOWNTO
+                  RecNumToInsertBefore DO
+      BEGIN
+        Seek(MenuFile,RecNum);
+        Read(MenuFile,MenuR);
+        Seek(MenuFile,(RecNum + InsertNum));
+        Write(MenuFile,MenuR);
+      END;
+  END;
+
   PROCEDURE DeleteMenu;
   VAR
     RecNumToDelete,
@@ -296,57 +325,107 @@ VAR
   PROCEDURE InsertMenu;
   VAR
     RecNumToInsertBefore,
-    NewMenuNum,
-    RecNum: Integer;
+    NewMenuNum: Integer;
   BEGIN
     IF (NumMenus = MaxMenus) THEN
       Messages(5,MaxMenus,'menus')
     ELSE
     BEGIN
       RecNumToInsertBefore := -1;
-      InputInteger('%LFMenu number to insert before?',RecNumToInsertBefore,[NumbersOnly],1,(NumMenus + 1),Changed);
-      IF (RecNumToInsertBefore >= 1) AND (RecNumToInsertBefore <= (NumMenus + 1)) THEN
+      InputInteger('%LFMenu number to insert before?',RecNumToInsertBefore,
+                   [NumbersOnly],1,(NumMenus + 1),Changed);
+      IF (RecNumToInsertBefore >= 1) AND
+         (RecNumToInsertBefore <= (NumMenus + 1)) THEN
       BEGIN
         Print('%LF[> Inserting menu record ...');
         SysOpLog('* Inserted 1 menu.');
         IF (RecNumToInsertBefore = (NumMenus + 1)) THEN
-          MenuRecNumArray[RecNumToInsertBefore] := (MenuRecNumArray[NumMenus] + CmdNumArray[NumMenus] + 1);
-        RecNumToInsertBefore := MenuRecNumArray[RecNumToInsertBefore];  {Convert To Real Record Number }
-        NewMenuNum := 0;
+          MenuRecNumArray[RecNumToInsertBefore] :=
+            (MenuRecNumArray[NumMenus] + CmdNumArray[NumMenus] + 1);
+        RecNumToInsertBefore := MenuRecNumArray[RecNumToInsertBefore];
         Reset(MenuFile);
-        RecNum := 1;
-        WHILE (RecNum <= NumMenus) DO
-        BEGIN
-          Seek(MenuFile,MenuRecNumArray[RecNum]);
-          Read(MenuFile,MenuR);
-          IF (MenuR.MenuNum > NewMenuNum) THEN
-            NewMenuNum := MenuR.MenuNum;
-          Inc(RecNum);
-        END;
-        FOR RecNum := 1 TO 1 DO
-        BEGIN
-          Seek(MenuFile,FileSize(MenuFile));
-          Write(MenuFile,MenuR);
-        END;
-        FOR RecNum := ((FileSize(MenuFile) - 1) - 1) DOWNTO RecNumToInsertBefore DO
-        BEGIN
-          Seek(MenuFile,RecNum);
-          Read(MenuFile,MenuR);
-          Seek(MenuFile,(RecNum + 1));
-          Write(MenuFile,MenuR);
-        END;
+        NewMenuNum := NextMenuNum;
+        MakeRoomAt(RecNumToInsertBefore,1);
         InitMenuVars(MenuR);
-        FOR RecNum := RecNumToInsertBefore TO ((RecNumToInsertBefore + 1) - 1) DO
-        BEGIN
-          Seek(MenuFile,RecNum);
-          MenuR.MenuNum := (NewMenuNum + 1);
-          Write(MenuFile,MenuR);
-        END;
+        Seek(MenuFile,RecNumToInsertBefore);
+        MenuR.MenuNum := NewMenuNum;
+        Write(MenuFile,MenuR);
         LoadMenuPointers;
         Close(MenuFile);
         LastError := IOResult;
       END;
     END;
+  END;
+
+  PROCEDURE CopyMenu;
+  VAR
+    SrcMenu,
+    DestMenu,
+    SrcRec,
+    DestRec,
+    CopyCmds,
+    RecNum,
+    NewMenuNum: Integer;
+    SrcMenuR: MenuRec;
+    Changed: Boolean;
+  BEGIN
+    IF (NumMenus = 0) THEN
+      Messages(4,0,'menus')
+    ELSE IF (NumMenus = MaxMenus) THEN
+      Messages(5,MaxMenus,'menus')
+    ELSE
+      BEGIN
+        SrcMenu := -1;
+        InputInteger('%LFCopy which menu?',SrcMenu,[NumbersOnly],1,NumMenus,
+                     Changed);
+        IF (SrcMenu < 1) OR (SrcMenu > NumMenus) THEN
+          Exit;
+        DestMenu := -1;
+        InputInteger('%LFCopy before which menu?',DestMenu,[NumbersOnly],1,
+                     (NumMenus + 1),Changed);
+        IF (DestMenu < 1) OR (DestMenu > (NumMenus + 1)) THEN
+          Exit;
+        CopyCmds := CmdNumArray[SrcMenu];
+        IF ((NumMenus + 1) > MaxMenus) OR ((CopyCmds + 1) > MaxCmds) THEN
+          BEGIN
+            Print('%LFNot enough room to copy that menu.');
+            PauseScr(FALSE);
+          END
+        ELSE
+          BEGIN
+            Reset(MenuFile);
+            Seek(MenuFile,MenuRecNumArray[SrcMenu]);
+            Read(MenuFile,SrcMenuR);
+            IF (DestMenu = (NumMenus + 1)) THEN
+              MenuRecNumArray[DestMenu] :=
+                (MenuRecNumArray[NumMenus] + CmdNumArray[NumMenus] + 1);
+            SrcRec := MenuRecNumArray[SrcMenu];
+            DestRec := MenuRecNumArray[DestMenu];
+            NewMenuNum := NextMenuNum;
+            Print('%LFMenu: ^1'+SrcMenuR.LDesc[1]);
+            IF PYNQ('%LFCopy this menu and all of its commands? ',
+                    0,FALSE) THEN
+              BEGIN
+                Print('%LF[> Copying menu record ...');
+                SysOpLog('* Copied menu: ^1'+SrcMenuR.LDesc[1]);
+                MakeRoomAt(DestRec,(CopyCmds + 1));
+                IF (SrcRec >= DestRec) THEN
+                  Inc(SrcRec,(CopyCmds + 1));
+                FOR RecNum := 0 TO CopyCmds DO
+                  BEGIN
+                    Seek(MenuFile,(SrcRec + RecNum));
+                    Read(MenuFile,MenuR);
+                    IF (RecNum = 0) THEN
+                      MenuR.MenuNum := NewMenuNum;
+                    Seek(MenuFile,(DestRec + RecNum));
+                    Write(MenuFile,MenuR);
+                  END;
+                LoadMenuPointers;
+              END;
+            Close(MenuFile);
+            LastError := IOResult;
+          END;
+      END;
   END;
 
   PROCEDURE ModifyMenu;
@@ -631,16 +710,18 @@ BEGIN
         ConfigHeader('Menu Editor',0,0);
         DisplayMenus(RecNumToList,TRUE);
       END;
-    InputChar('%LF^2Menu Editor [^1DIM^2,(^1?^2)Help,<^1CR^2>Page,(^1Q^2)uit]: ',Cmd,'QDIM?'^M,[CapAll]);
+    InputChar('%LF^2Menu Editor [^1CDIM^2,(^1?^2)Help,<^1CR^2>Page,(^1Q^2)uit]: ',Cmd,'QCDIM?'^M,[CapAll]);
     CASE Cmd OF
       ^M  : IF (RecNumToList < 1) OR (RecNumToList > NumMenus) THEN
               RecNumToList := 1;
+      'C' : CopyMenu;
       'D' : DeleteMenu;
       'I' : InsertMenu;
       'M' : ModifyMenu;
       '?' : BEGIN
               NL;
-              LCmds3(12,1,'Delete Menu','Insert Menu','Modify Menu');
+              LCmds3(12,1,'Copy Menu','Delete Menu','Insert Menu');
+              LCmds3(12,1,'Modify Menu','','');
             END;
     END;
     IF (CMD <> ^M) THEN

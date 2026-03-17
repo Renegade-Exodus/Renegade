@@ -1,9 +1,5 @@
 {$A+,B-,D-,E-,F+,I-,L-,N-,O+,R-,S+,V-}
-{
-removed macros, in their own submenu now
 
-- add activity threshjold page 2
-}
 UNIT SysOp2D;
 
 INTERFACE
