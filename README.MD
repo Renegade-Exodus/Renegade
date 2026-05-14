@@ -9,9 +9,8 @@ My coding partner Lee Woodridge has not been heard from in over a year.   When w
 swapping code back and forth.  Over time I came to appreciate it as well.   I fear he may remove his account and the storage for the code will be lost.  So,
 in that sense, I am moving it back to my account "just in case".
 
-Last release I made was in Sept. 2024, and I made a few minor changes since I released that version, but nothing worth a "full" release.  I will slowly update this as I feel
-to make any changes.  
-
 ** If anyone wishes to contribute, please feel free to do so!  **
 
 2/06/26 - I added a complete light bar setup for the Message Reader and File listing.  I also added a archive lightbar viewer that can view ANSI and TEXT inside an archive. - Exodus
+
+LATEST RELEASE WAS on March 1, 2026.
