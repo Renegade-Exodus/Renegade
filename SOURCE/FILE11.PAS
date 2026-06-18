@@ -44,6 +44,8 @@ USES
   File8,
   File10,
   Menus,
+  Menus2,
+  MyIO,
   TimeFunc;
 
 VAR
@@ -804,7 +806,7 @@ VAR
     LastSel: Integer;
     EndIdx: Integer;
     Idx: Integer;
-     PageSize: Integer;
+    PageSize: Integer;
     W: Word;
     TransferFlags: TransferFlagSet;
     NeedRedraw: Boolean;
@@ -820,14 +822,28 @@ VAR
     StackTop: Integer;
     ContStack: ARRAY[0..40] OF Integer;
     ExtStack: ARRAY[0..40] OF Integer;
+    { Page log: DrawPage records every page rendered; UP walks backwards through it }
+    PageLogTop: Integer;
+    PageLogSel:      ARRAY[0..800] OF Integer;
+    PageLogStartIdx: ARRAY[0..800] OF Integer;
+    PageLogContFile: ARRAY[0..800] OF Integer;
+    PageLogStartExt: ARRAY[0..800] OF Integer;
+    PageLogEndIdx:   ARRAY[0..800] OF Integer;
+    GoingUp: Boolean;  { TRUE when UP is navigating - suppresses log append }
     FI: FileInfoRecordType;
     BK: Str52;
+    SaveMenu: Byte;
+    CmdStr, NewMenuCmd: AStr;
+    SaveCmdKeys: AStr;
+    CmdToExec: Byte;
+    CmdExists, CmdNotHid, MenuDone: Boolean;
 
     WinTop: Integer;
     WinBot: Integer;
     ListTop: Integer;
     ListBot: Integer;
     MaxLines: Integer;
+    SaveY: Integer;
   FUNCTION BatchKeyForFI(CONST FI: FileInfoRecordType): Str52;
 BEGIN
   IF Common.Exist(MemFileArea.DLPath+FI.FileName) THEN
@@ -970,33 +986,80 @@ BEGIN
   RecalcBatchDLStats;
 END;
 
-PROCEDURE DrawName(I: Integer; Hi: Boolean);
+PROCEDURE DrawFileLine(I: Integer; Hi: Boolean);
+{ Repaints the main line row for entry I.
+  If this entry is in continuation mode (ContFile=I, StartExt>0),
+  redraws the folded continuation line (filename+stats+first-ext-text).
+  Otherwise redraws the normal main line (filename+stats+description). }
 VAR
   Y: Integer;
+  S, S1, S2, NumStr: AStr;
+  NumExt: Byte;
+  L: Byte;
+  Batched: Boolean;
 BEGIN
-  { Redraw ONLY the filename field on the file's MAIN line.
-    IMPORTANT: Do NOT draw on YPos+1, or we will overwrite the next entry
-    (and its red blinking NEW marker) when each file is a single-line entry. }
   IF (I < 1) OR (I > Total) THEN
     Exit;
   IF (YPos^[I] < 1) THEN
     Exit;
-
-  Y := YPos^[I]+1;
+  Y := YPos^[I];
   IF (Y < ListTop) OR (Y > ListBot) THEN
     Exit;
-
   Seek(FileInfoFile,Recs^[I]);
   Read(FileInfoFile,FI);
 
-  { filename starts at column 5 }
-  ANSIG(5,Y);
-  IF (Hi) THEN
-    UserColor(7)
+  IF ((I MOD 100) < 10) THEN
+    NumStr := ' ' + IntToStr(I MOD 100)
   ELSE
-    UserColor(1);
-  PrintACR(PadRightStr(FI.FileName,12));
-  UserColor(1);
+    NumStr := IntToStr(I MOD 100);
+  Batched := File6.CheckBatchDL(BatchKeyForFI(FI));
+  IF Batched THEN
+    S := '^1*^0'
+  ELSE
+    S := AOnOff(DayNum(PD2Date(FI.FileDate)) >= DayNum(PD2Date(NewFileDate)),
+               '*',' ');
+  S := S + '' + NumStr + ' ';
+  S1 := FI.FileName;
+
+  IF (ContFile = I) AND (StartExt > 0) THEN
+  BEGIN
+    { Continuation mode: fold filename+stats+first-ext-line onto one row }
+    LoadVerbArray11(FI,ExtendedArray,NumExt);
+    L := StartExt + 1;
+    { Skip leading blank ext lines }
+    WHILE (L <= NumExt) AND (LennMCI(ExtendedArray[L]) = 0) DO
+      Inc(L);
+    S2 := '';
+    IF (L <= NumExt) THEN
+      S2 := ExtendedArray[L];
+    IF Hi THEN
+      S := S + '' + S1 + ' '
+    ELSE
+      S := S + '' + S1 + ' ';
+    S := S + GetFileStats(FI) + ' ' + S2 + '';
+  END
+  ELSE
+  BEGIN
+    { Normal mode: filename+stats+short description }
+    IF Hi THEN
+      S := S + '' + S1 + ''
+    ELSE
+      S := S + '' + S1 + '';
+    S := S + ' ' + GetFileStats(FI) + '';
+    S2 := FI.Description;
+    IF (LennMCI(S2) > 50) THEN
+      S2 := Copy(S2,1,Length(S2) - (LennMCI(S2) - 50));
+    S := S + ' ' + S2;
+  END;
+
+  IF OkANSI THEN SerialOut(#27+'['+IntToStr(Y)+';1H');
+  IF (WantOut) THEN GoToXY(1,Y);
+  Prompt(#27+'[2K');
+  Prompt(S);
+  { Re-hide cursor after output - remote terminals show it at end of line }
+  SerialOut(#27+'[?25l');
+  IF (WantOut) THEN
+    myio.Cursor(FALSE);
 END;
 
 FUNCTION FileRecNumStr(N: Integer): AStr;
@@ -1068,45 +1131,66 @@ BEGIN
   {UsedLines is an counter for the page; do not reset it here - EVER!}
   NewExt := ExtStart;
 
-  { always print the main file line }
+  { Always print the main file line.
+    On continuation pages (ExtStart>0) show filename highlighted so the
+    user always knows which file the extended description belongs to. }
   IF ((RecNum MOD 100) < 10) THEN
     NumStr := ' ' + IntToStr(RecNum MOD 100)
   ELSE
     NumStr := IntToStr(RecNum MOD 100);
-    Batched := File6.CheckBatchDL(BatchKeyForFI(FI));
-    IF Batched THEN
-      S := '^1*^0'
-    ELSE
-      S := AOnOff(DayNum(PD2Date(FI.FileDate)) >= DayNum(PD2Date(NewFileDate)),'*',' ');
-    S := S + '' + NumStr + ' ';
-
-
+  Batched := File6.CheckBatchDL(BatchKeyForFI(FI));
+  IF Batched THEN
+    S := '^1*^0'
+  ELSE
+    S := AOnOff(DayNum(PD2Date(FI.FileDate)) >= DayNum(PD2Date(NewFileDate)),'*',' ');
+  S := S + '' + NumStr + ' ';
   S1 := FI.FileName;
   S := S + '' + S1 + ' ' + GetFileStats(FI) + '';
-  S2 := FI.Description;
-  IF (LennMCI(S2) > 50) THEN
-    S2 := Copy(S2,1,Length(S2) - (LennMCI(S2) - 50));
-  S := S + ' ' + S2;
-
-  Inc(Lines);
-  Inc(UsedLines);
-  PrintACR(S);
+  IF (ExtStart = 0) THEN
+  BEGIN
+    { First page: print main line with short description, then ext lines below }
+    S2 := FI.Description;
+    IF (LennMCI(S2) > 50) THEN
+      S2 := Copy(S2,1,Length(S2) - (LennMCI(S2) - 50));
+    S := S + ' ' + S2;
+    Inc(Lines);
+    Inc(UsedLines);
+    PrintACR(S);
+  END;
 
   { extended .ext description lines, starting at ExtStart+1 }
   IF (FI.VPointer <> -1) AND (UsedLines < MaxLines) THEN
   BEGIN
     LoadVerbArray11(FI,ExtendedArray,NumExt);
     L := ExtStart + 1;
+    { Skip leading blank lines on continuation pages }
+    IF (ExtStart > 0) THEN
+      WHILE (L <= NumExt) AND (LennMCI(ExtendedArray[L]) = 0) DO
+        Inc(L);
     WHILE (L <= NumExt) AND (UsedLines < MaxLines) AND (NOT Abort) AND (NOT HangUp) DO
     BEGIN
       S1 := ExtendedArray[L];
-      S := PadLeftStr('',28) + '' + S1 + '';
+      IF (ExtStart > 0) AND (L = ExtStart + 1) THEN
+      BEGIN
+        { Continuation: filename + size + ext line, matching first-page layout }
+        S := ' ' + NumStr + ' ' + FI.FileName
+           + ' ' + GetFileStats(FI) + ' ' + S1 + '';
+      END
+      ELSE
+        S := PadLeftStr('',28) + '' + S1 + '';
       Inc(Lines);
       Inc(UsedLines);
       PrintACR(S);
       NewExt := L;
       Inc(L);
     END;
+  END;
+  { Continuation with no ext lines: print the main line alone }
+  IF (ExtStart > 0) AND (FI.VPointer = -1) THEN
+  BEGIN
+    Inc(Lines);
+    Inc(UsedLines);
+    PrintACR(S);
   END;
 END;
 
@@ -1209,23 +1293,35 @@ VAR
   CurExtStart: Integer;
   CurIdx: Integer;
   BK: Str52;
+  AbsRow: Integer;
+  UsedLinesBefore: Integer;
 BEGIN
   FileAreaNameDisplayed := FALSE;
+  { Reset color via UserColor (not raw SerialOut) so Renegade's CurrentColor
+    tracking stays in sync with the terminal. A raw SerialOut here would reset
+    the terminal but leave CurrentColor stale, causing SetC's delta logic to
+    skip sending the header ANSI's color codes (it thinks no change is needed). }
+  UserColor(0);
   CLS;
-  WinTop := Hi(WindMin) + 1;
-  WinBot := Hi(WindMax) + 1;
-  ListTop := WinTop + 2;
-  { IMPORTANT:
-    Each entry can draw a second "name" line via DrawName(YPos+1).
-    If the last usable list row is too close to the footer, that +1 can
-    land on the footer's top line, causing the "random filename in footer"
-    garbage.  To prevent that, reserve ONE extra row above the 3-line
-    footer.
-  }
-  ListBot := WinBot - 4;  { footer starts at row 22 (4 lines: 22-25); allow highlight on row 21 }
-  MaxLines := (ListBot - ListTop) + 1;
+  { ClrScr (called by CLS) restores the DOS cursor - hide it again }
+  IF (WantOut) THEN
+    myio.Cursor(FALSE);
+  { WinTop/WinBot/ListTop/ListBot locked at ListFileSpec_LB entry }
   FillChar(YPos^, SizeOf(TYArr), 0);
+  Lines := 0;
+  FileRedisplayLines := 0;
   DisplayFileAreaHeader;
+  { AbsRow: absolute serial row where files start = ListTop (accounts for
+    header height). Position cursor explicitly before any file content prints. }
+  AbsRow   := ListTop;
+  MaxLines := (ListBot - AbsRow) + 1;
+  IF (MaxLines < 1) THEN MaxLines := 1;
+  { Move cursor to AbsRow (below header) before files render.
+    Do NOT send ESC[0m here - it corrupts header colors on remote terminals.
+    File lines set their own colors via MCI/color codes. }
+  IF OkANSI THEN
+    SerialOut(#27'['+IntToStr(AbsRow)+';1H');
+  IF (WantOut) THEN GoToXY(1, AbsRow);
   UsedLines := 0;
   Lines := 0;
   SaveFRL := FileRedisplayLines;
@@ -1255,9 +1351,11 @@ BEGIN
     IF (FileInfo.VPointer <> -1) THEN
       LoadVerbArray11(FileInfo, ExtendedArray, NumExt);
 
-    YPos^[CurIdx] := (ListTop + UsedLines);
+    YPos^[CurIdx] := AbsRow;
+    UsedLinesBefore := UsedLines;
     NewExt := 0;
     DisplayFileChunk(FileInfo, CurIdx, CurExtStart, MaxLines, UsedLines, NewExt);
+    AbsRow := AbsRow + (UsedLines - UsedLinesBefore);
     EndIdx := CurIdx;
 
     IF (NumExt > 0) AND (NewExt < NumExt) THEN
@@ -1276,9 +1374,28 @@ BEGIN
     PageSize := 1
   ELSE
     PageSize := (EndIdx - StartIdx + 1);
-  DrawName(Sel, TRUE);
+  { Clamp Sel to EndIdx - on UP restore, PageLogEndIdx may be from a different
+    page context; EndIdx from this DrawPage run is always correct }
+  { DrawLBFooter; }  { Footer commented out - Pause_Files shows menu prompt }
+  { Draw highlight after page draw }
+  IF (Sel > EndIdx) THEN
+    Sel := EndIdx;
+  DrawFileLine(Sel, TRUE);
   LastSel := Sel;
-  DrawLBFooter;
+  { Log this page for UP navigation - only when going forward (not replaying) }
+  IF (NOT GoingUp) AND (PageLogTop < 800) THEN
+  BEGIN
+    PageLogSel[PageLogTop]      := Sel;
+    PageLogStartIdx[PageLogTop] := StartIdx;
+    PageLogContFile[PageLogTop] := ContFile;
+    PageLogStartExt[PageLogTop] := StartExt;
+    PageLogEndIdx[PageLogTop]   := EndIdx;
+    Inc(PageLogTop);
+  END;
+  GoingUp := FALSE;
+  SerialOut(#27+'[?25l');
+  IF (WantOut) THEN
+    myio.Cursor(FALSE);
   NeedRedraw := FALSE;
 END;
 
@@ -1289,6 +1406,15 @@ END;
     SaveAllowContinue := AllowContinue;
     AllowContinue := FALSE;
     TempPause := FALSE;
+    { ListBot = Hi(WindMax) is the last usable absolute serial row.
+      MaxLines is recomputed in DrawPage from actual header height via AbsRow.
+      These values are status-bar-independent since AbsRow tracks serial position. }
+    WinTop  := 1;
+    WinBot  := Hi(WindMax) + 1;
+    ListTop := 4;
+    ListBot := Hi(WindMax);
+    IF (ListBot < ListTop) THEN ListBot := ListTop;
+    MaxLines := (ListBot - ListTop) + 1;
     Total := 0;
     RecNo(FileInfo,Spec,DirFileRecNum);
     IF (BadDownloadPath) THEN
@@ -1319,70 +1445,138 @@ END;
       Dispose(Recs);
       Exit;
     END;
-
     StartIdx := 1;
     ContFile := 0;
     StartExt := 0;
     StackTop := 0;
-    Sel := 1;
-    LastSel := 1;
-    EndIdx := 1;
+    PageLogTop := 0;
+    GoingUp := FALSE;
+    Sel      := 1;
+    LastSel  := 1;
+    EndIdx   := 1;
     NeedRedraw := TRUE;
+    { Load the FileListingMenu for command routing }
+    SaveMenu := CurMenu;
+    CurMenu := General.FileListingMenu;
+    IF (NOT NewMenuToLoad) THEN
+      LoadMenuPW;
+    AutoExecCmd('FIRSTCMD');
+
+    { Hide cursor for cleaner lightbar display - local and remote }
+    IF (WantOut) THEN
+      myio.Cursor(FALSE);
+    IF OkANSI THEN
+      SerialOut(#27+'[?25l');
 
     REPEAT
       IF (NeedRedraw) THEN
+      BEGIN
         DrawPage;
+        { Show file listing prompt on the last usable row of the screen. }
+        UserColor(0);
+        IF OkANSI THEN
+          SerialOut(#27+'['+ IntToStr(ListBot + 1)+';1H');
+        IF (WantOut) THEN GoToXY(1, ListBot + 1);
+        Prompt(#27+'[2K');
+        IF NOT (NoMenuPrompt IN MemMenu.MenuFlags) THEN
+          Prompt(MemMenu.MenuPrompt);
+        NeedRedraw := FALSE;
+      END;
       {WKey removed for LB key handling}
       W := InKey;
 
       IF (W = F_UP) THEN
       BEGIN
-        IF (StackTop > 0) THEN
+        IF (Sel > StartIdx) AND (ContFile = 0) THEN
         BEGIN
-          Dec(StackTop);
-          ContFile := ContStack[StackTop];
-          StartExt := ExtStack[StackTop];
-          StartIdx := ContFile;
-          Sel := ContFile;
-          NeedRedraw := TRUE;
-        END
-        ELSE IF (ContFile > 0) AND (StartExt > 0) THEN
-        BEGIN
-          StartExt := 0;
-          StartIdx := ContFile;
-          Sel := ContFile;
-          NeedRedraw := TRUE;
-        END
-        ELSE IF (Sel > 1) THEN
-        BEGIN
+          { Same page - move highlight up one entry }
+          DrawFileLine(LastSel, FALSE);
+          NextContFile := 0;
+          NextStartExt := 0;
           Dec(Sel);
-          ContFile := 0;
-          StartExt := 0;
+          DrawFileLine(Sel, TRUE);
+          LastSel := Sel;
+        END
+        ELSE IF (PageLogTop > 1) THEN
+        BEGIN
+          { Go back to previous logged page.
+            Set Sel=Total so DrawPage clamp corrects it to actual EndIdx. }
+          GoingUp := TRUE;
+          Dec(PageLogTop);  { discard current page, step to previous }
+          StartIdx := PageLogStartIdx[PageLogTop - 1];
+          ContFile := PageLogContFile[PageLogTop - 1];
+          StartExt := PageLogStartExt[PageLogTop - 1];
+          Sel      := Total;
           StackTop := 0;
+          NextContFile := 0;
+          NextStartExt := 0;
+          NeedRedraw := TRUE;
         END;
       END
       ELSE IF (W = F_DOWN) THEN
       BEGIN
-        IF (NextContFile = Sel) AND (NextStartExt > 0) THEN
+        IF (NextContFile = Sel) AND (NextStartExt > 0) AND (Sel = EndIdx) THEN
         BEGIN
-          IF (StackTop < 40) THEN
-          BEGIN
-            ContStack[StackTop] := Sel;
-            ExtStack[StackTop] := StartExt;
-            Inc(StackTop);
-          END;
+          { Selected file has more ext lines and is last on page - show continuation }
+          GoingUp := FALSE;
           ContFile := Sel;
           StartExt := NextStartExt;
           StartIdx := ContFile;
-          Sel := ContFile;
           NeedRedraw := TRUE;
         END
         ELSE IF (Sel < Total) THEN
         BEGIN
           Inc(Sel);
+          IF (Sel > EndIdx) THEN
+          BEGIN
+            { Check if the entry we just left had overflow AND it was not
+              already shown solo at the top (StartIdx=Sel-1 means we already
+              showed it from start - advance to next entry instead) }
+            IF (NextContFile = (Sel - 1)) AND (NextStartExt > 0) AND
+               (StartIdx <> (Sel - 1)) THEN
+            BEGIN
+              GoingUp := FALSE;
+              Dec(Sel);  { restore Sel to the overflow entry }
+              ContFile := 0;
+              StartExt := 0;
+              StackTop := 0;
+              StartIdx := Sel;
+              NeedRedraw := TRUE;
+            END
+            ELSE
+            BEGIN
+              { Normal scroll to new page }
+              GoingUp := FALSE;
+              DrawFileLine(LastSel, FALSE);
+              ContFile := 0;
+              StartExt := 0;
+              StackTop := 0;
+              StartIdx := Sel;
+              NeedRedraw := TRUE;
+            END;
+          END
+          ELSE
+          BEGIN
+            { Same page - just move highlight }
+            DrawFileLine(LastSel, FALSE);
+            ContFile := 0;
+            StartExt := 0;
+            NextContFile := 0;
+            NextStartExt := 0;
+            DrawFileLine(Sel, TRUE);
+            LastSel := Sel;
+          END;
+        END
+        ELSE IF (Sel = Total) AND (StartIdx <> Sel) THEN
+        BEGIN
+          { Scroll last entry to top }
+          GoingUp := FALSE;
+          DrawFileLine(LastSel, FALSE);
           ContFile := 0;
           StartExt := 0;
           StackTop := 0;
+          StartIdx := Sel;
+          NeedRedraw := TRUE;
         END;
       END
       ELSE IF (W = Ord('V')) OR (W = Ord('v')) THEN
@@ -1395,6 +1589,12 @@ END;
             ViewInternalArchive(MemFileArea.DLPath+FI.FileName)
           ELSE
             ViewInternalArchive(MemFileArea.ULPath+FI.FileName);
+          Abort         := FALSE;
+          Next          := FALSE;
+          AllowContinue := FALSE;
+          TempPause     := FALSE;
+          Lines         := 0;
+          Prompt(#27'[0m');
           NeedRedraw := TRUE;
         END
         ELSE
@@ -1402,7 +1602,6 @@ END;
           NL;
           Print('^8Not a supported archive.^0');
         END;
-      
       END
 
       ELSE IF (W = Ord('D')) OR (W = Ord('d')) THEN
@@ -1411,24 +1610,35 @@ END;
         IF (NumBatchDLFiles = 0) THEN
         BEGIN
           NL;
-		  PrintF('BATCHEMP');
-          IF (NoFile) THEN 
-		  Print('%CL %LF %LF %LF ^8Batch queue is empty.^0');
-          END
+          PrintF('BATCHEMP');
+          IF (NoFile) THEN
+            Print('%CL %LF %LF %LF ^8Batch queue is empty.^0');
+        END
         ELSE
         BEGIN
           CLS;
           File6.BatchDownload;
+          Abort         := FALSE;
+          Next          := FALSE;
+          AllowContinue := FALSE;
+          TempPause     := FALSE;
+          Lines         := 0;
+          Prompt(#27'[0m');
           NeedRedraw := TRUE;
         END;
       END
 
       ELSE IF (W = 32) THEN
       BEGIN
-                SaveAllowContinue := AllowContinue;
+        SaveAllowContinue := AllowContinue;
         TempPause := TRUE;
         AllowContinue := FALSE;
-        ANSIG(1, Hi(WindMax));
+        SerialOut(#27+'[?25l');
+        IF (WantOut) THEN
+          myio.Cursor(FALSE);
+        IF OkANSI THEN
+          SerialOut(#27+'['+IntToStr(ListBot + 1)+';1H');
+        IF (WantOut) THEN GoToXY(1, ListBot + 1);
         Prompt(#27+'[2K');
         Seek(FileInfoFile,Recs^[Sel]);
         Read(FileInfoFile,FI);
@@ -1451,33 +1661,38 @@ END;
           { resync counters after add }
           RecalcBatchDLStats;
         END;
-
-                { restore output flags and redraw footer to wipe any stray output }
+        { restore output flags }
         AllowContinue := SaveAllowContinue;
         TempPause := SaveTempPause;
-        DrawLBFooter;
-        ANSIG(1, YPos^[Sel]);
-NeedRedraw := TRUE;
-      END
-      ELSE IF (W = Ord('T')) OR (W = Ord('t')) THEN
-      BEGIN
-        Seek(FileInfoFile,Recs^[Sel]);
-        Read(FileInfoFile,FI);
-        TransferFlags := [IsCheckRatio];
-        CLS;
-        DLX(FI,Recs^[Sel],TransferFlags);
-        IF (IsKeyboardAbort IN TransferFlags) THEN
-          Break;
+        { DrawLBFooter; }  { Footer commented out }
+        IF OkANSI THEN
+          SerialOut(#27+'['+IntToStr(YPos^[Sel])+';1H');
+        IF (WantOut) THEN GoToXY(1, YPos^[Sel]);
+        { Cursor stays hidden - DrawPage redraws next loop iteration }
+        SerialOut(#27+'[?25l');
+        IF (WantOut) THEN
+          myio.Cursor(FALSE);
+        GoingUp := FALSE;
         NeedRedraw := TRUE;
       END
       ELSE IF (W = 13) OR (W = 10) THEN
       BEGIN
-        { ENTER = next page; at end of NewScan list, continue to next area }
-        IF (Sel < Total) THEN
+        { ENTER mirrors DOWN: check continuation first, then advance page }
+        IF (NextContFile = Sel) AND (NextStartExt > 0) AND (StartIdx = Sel) THEN
         BEGIN
+          GoingUp := FALSE;
+          ContFile := Sel;
+          StartExt := NextStartExt;
+          StartIdx := ContFile;
+          NeedRedraw := TRUE;
+        END
+        ELSE IF (Sel < Total) THEN
+        BEGIN
+          GoingUp := FALSE;
           Sel := EndIdx + 1;
           IF (Sel > Total) THEN
             Sel := Total;
+          StartIdx := Sel;
           ContFile := 0;
           StartExt := 0;
           StackTop := 0;
@@ -1500,49 +1715,93 @@ NeedRedraw := TRUE;
         IF (LB_NewScanMode) THEN
           LB_QuitNewScan := TRUE;
         Break;
+      END
+      ELSE IF (W = Ord('?')) THEN
+      BEGIN
+        { ? shows the menu help ANSI/generic menu inline - no CLS so the
+          listing stays visible behind the help output. PauseScr waits. }
+        Inc(CurHelpLevel);
+        IF (CurHelpLevel > 3) THEN CurHelpLevel := 1;
+        UserColor(0);
+        NL;
+        ShowThisMenu;
+        PauseScr(FALSE);
+        CurHelpLevel := 1;
+        NeedRedraw := TRUE;
+      END
+      ELSE IF (W > 0) THEN
+      BEGIN
+        { Route unhandled keys through FileListingMenu commands }
+        CmdStr    := AllCaps(Chr(W));
+        NewMenuCmd := '';
+        TFilePrompt := 0;
+        MenuDone  := FALSE;
+        CmdToExec := 0;
+        SaveY     := WhereY;
+        SaveCmdKeys := '';
+        UserColor(0);
+        CLS;
+        REPEAT
+          FCmd(CmdStr, CmdToExec, CmdExists, CmdNotHid);
+          IF (CmdToExec <> 0) AND
+             (MemCmd^[CmdToExec].CmdKeys <> '-^') AND
+             (MemCmd^[CmdToExec].CmdKeys <> '-/') AND
+             (MemCmd^[CmdToExec].CmdKeys <> '-\') THEN
+          BEGIN
+            SaveCmdKeys := MemCmd^[CmdToExec].CmdKeys;
+            DoMenuCommand(MenuDone,
+                          MemCmd^[CmdToExec].CmdKeys,
+                          MemCmd^[CmdToExec].Options,
+                          NewMenuCmd,
+                          MemCmd^[CmdToExec].NodeActivityDesc);
+          END;
+        UNTIL (CmdToExec = 0) OR (MenuDone) OR (HangUp);
+        { EditFiles sets global Abort:=TRUE when user presses Q. Reset it so
+          DrawPage's PrintACR calls don't exit early leaving a blank screen. }
+        Abort         := FALSE;
+        Next          := FALSE;
+        { Keep pagination suppressed and reload MemCmd for FileListingMenu.
+          AllowContinue/Lines are reset AFTER LoadMenuPW because LoadMenuPW
+          sets AllowContinue=TRUE internally for its ANSI display. Resetting
+          after ensures DisplayFileAreaHeader in DrawPage cannot fire Pause_Files. }
+        CurMenu       := General.FileListingMenu;
+        NewMenuToLoad := FALSE;
+        LoadMenuPW;
+        AllowContinue := FALSE;
+        TempPause     := FALSE;
+        Lines         := 0;
+        UserColor(0);
+        IF (TFilePrompt = 2) THEN Break;  { abort }
+        { Pause before redraw only for display commands (DA/DM/DS etc) so
+          ? help ANSI is visible before CLS wipes it. Action commands (FE, FU,
+          FL, etc.) do not need a pause - they already interacted with user. }
+        IF (SaveCmdKeys[1] = 'D') AND (TFilePrompt = 0) THEN
+          InKey;
+        IF (TFilePrompt = 3) THEN         { next page }
+        BEGIN
+          IF (Sel < Total) THEN
+          BEGIN
+            GoingUp  := FALSE;
+            Sel      := EndIdx + 1;
+            IF (Sel > Total) THEN Sel := Total;
+            StartIdx := Sel;
+            ContFile := 0; StartExt := 0; StackTop := 0;
+          END;
+        END;
+        NeedRedraw := TRUE;
       END;
 
-IF (Sel < StartIdx) THEN
-      BEGIN
-        { Page up: jump to bottom of previous page (unless already at very top) }
-        StartIdx := StartIdx - PageSize;
-        IF (StartIdx < 1) THEN
-        BEGIN
-          StartIdx := 1;
-          Sel := 1;
-        END
-        ELSE
-        BEGIN
-          Sel := StartIdx + PageSize - 1;
-          IF (Sel > Total) THEN
-            Sel := Total;
-        END;
-        ContFile := 0;
-        StartExt := 0;
-        StackTop := 0;
-        NeedRedraw := TRUE;
-      END
-      ELSE IF (Sel > EndIdx) THEN
-      BEGIN
-        StartIdx := EndIdx + 1;
-        IF (StartIdx > Total) THEN
-          StartIdx := Total - PageSize + 1;
-        IF (StartIdx < 1) THEN
-          StartIdx := 1;
-        Sel := StartIdx;
-        ContFile := 0;
-        StartExt := 0;
-        StackTop := 0;
-        NeedRedraw := TRUE;
-      END
-      ELSE IF (Sel <> LastSel) THEN
-      BEGIN
-        DrawName(LastSel,FALSE);
-        FileRedisplayLines := SaveFRL;
-        DrawName(Sel,TRUE);
+      IF (Sel <> LastSel) AND (NOT NeedRedraw) THEN
         LastSel := Sel;
-      END;
     UNTIL (HangUp);
+    { Reset color and restore cursor on exit }
+    UserColor(0);
+    IF OkANSI THEN
+      SerialOut(#27+'[?25h');
+    IF (WantOut) THEN
+      myio.Cursor(TRUE);
+    CurMenu := SaveMenu;
+    NewMenuToLoad := TRUE;
     Dispose(YPos);
     Dispose(Recs);
     AllowContinue := SaveAllowContinue;
@@ -1720,7 +1979,9 @@ BEGIN
           Found := FALSE;
           LIL := 0;
           {CLS;}
-          lRGLngStr(95,FALSE); {Prompt('^0Scanning ^1'+MemFileArea.AreaName+' #'+IntToStr(CompFileArea(FileArea,0))+'^0 ...');}
+          lRGLngStr(95,FALSE);
+          {Prompt('^0Scanning ^1'+MemFileArea.AreaName+
+                  ' #'+IntToStr(CompFileArea(FileArea,0))+'^0 ...');}
                     IF (OkANSI) AND (General.UseLightBars) AND (LightBars IN ThisUser.SFlags) THEN
             BEGIN
           { Quick pre-scan: only show a lightbar list if this area has any new files }

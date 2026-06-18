@@ -30,7 +30,7 @@ PROCEDURE Cursor(b: BOOLEAN); ASSEMBLER;
 ASM
   cmp b, 1
   je @turnon
-  mov ch, 9
+  mov ch, $20  { bit 5 set = cursor disabled on EGA/VGA }
   mov cl, 0
   jmp @goforit
   @turnon:
