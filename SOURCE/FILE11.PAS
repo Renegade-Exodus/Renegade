@@ -869,7 +869,7 @@ BEGIN
   {$I-} Reset(BatchDLFile); {$I+}
   IF (IOResult <> 0) THEN
   BEGIN
-    {$I-} Rewrite(BatchDLFile); {$I+}
+    {$I-} Rewrite(BatchDLFile); {$I-}
   END;
   IF (IOResult <> 0) THEN
     EXIT;
@@ -1399,6 +1399,26 @@ BEGIN
   NeedRedraw := FALSE;
 END;
 
+  PROCEDURE BuildFileRecs;
+  BEGIN
+    Total := 0;
+    RecNo(FileInfo,Spec,DirFileRecNum);
+    WHILE (DirFileRecNum <> -1) AND (Total < MAX_LB_FILES) AND (NOT HangUp) DO
+    BEGIN
+      Seek(FileInfoFile,DirFileRecNum);
+      Read(FileInfoFile,FileInfo);
+      IF (CanSee(FileInfo)) AND
+         ((NOT LB_NewScanMode) OR
+          (DayNum(PD2Date(FileInfo.FileDate)) >= DayNum(PD2Date(NewFileDate))) OR
+          (FINotVal IN FileInfo.FIFlags)) THEN
+      BEGIN
+        Inc(Total);
+        Recs^[Total] := DirFileRecNum;
+      END;
+      NRecNo(FileInfo,DirFileRecNum);
+    END;
+  END;
+
   BEGIN
     Abort := FALSE;
     Next := FALSE;
@@ -1415,27 +1435,13 @@ END;
     ListBot := Hi(WindMax);
     IF (ListBot < ListTop) THEN ListBot := ListTop;
     MaxLines := (ListBot - ListTop) + 1;
-    Total := 0;
     RecNo(FileInfo,Spec,DirFileRecNum);
     IF (BadDownloadPath) THEN
       Exit;
     New(Recs);
     New(YPos);
     FillChar(YPos^, SizeOf(TYArr), 0);
-    WHILE (DirFileRecNum <> -1) AND (Total < MAX_LB_FILES) AND (NOT HangUp) DO
-    BEGIN
-      Seek(FileInfoFile,DirFileRecNum);
-      Read(FileInfoFile,FileInfo);
-            IF (CanSee(FileInfo)) AND
-         ((NOT LB_NewScanMode) OR
-          (DayNum(PD2Date(FileInfo.FileDate)) >= DayNum(PD2Date(NewFileDate))) OR
-          (FINotVal IN FileInfo.FIFlags)) THEN
-      BEGIN
-        Inc(Total);
-        Recs^[Total] := DirFileRecNum;
-      END;
-      NRecNo(FileInfo,DirFileRecNum);
-    END;
+    BuildFileRecs;
 
     IF (Total < 1) THEN
     BEGIN
@@ -1772,6 +1778,20 @@ END;
         Lines         := 0;
         UserColor(0);
         IF (TFilePrompt = 2) THEN Break;  { abort }
+        { A command just executed (Delete, Move, etc.) may have changed the
+          set of records in this file area. Rebuild the in-memory file list
+          from disk rather than continuing to browse the stale snapshot -
+          browsing a stale Recs/Total after a record is removed re-reads
+          leftover/garbage data and loops on it until the user presses Q. }
+        BuildFileRecs;
+        IF (Total < 1) THEN
+        BEGIN
+          NL;
+          Print('^8No files remain in this area.^0');
+          Break;
+        END;
+        IF (Sel > Total) THEN Sel := Total;
+        IF (StartIdx > Total) THEN StartIdx := Total;
         { Pause before redraw only for display commands (DA/DM/DS etc) so
           ? help ANSI is visible before CLS wipes it. Action commands (FE, FU,
           FL, etc.) do not need a pause - they already interacted with user. }

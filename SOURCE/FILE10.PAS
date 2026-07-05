@@ -111,6 +111,11 @@ VAR
   SaveTempPause,
   DontShowList,
   Ok: Boolean;
+  SaveLightBarArray: ARRAY[1..50] OF LightBarRecordType;
+  SaveLightBarCmd,
+  SaveLightBarCounter: Byte;
+  SaveLightBarFirstCmd: Boolean;
+  LBCounter: Byte;
 
   PROCEDURE ToggleFIFlag(FIFlagT: FileInfoFlagType; VAR FIFlagS: FIFlagSet);
   BEGIN
@@ -517,6 +522,16 @@ BEGIN
                 NewCompTables;
               SaveTempPause := TempPause;
               TempPause := FALSE;
+              { Preserve the caller's (fileP listing) LightBar state - the file
+                area selection prompt below reuses these same globals, and
+                without saving/restoring them the caller's LightBar cursor
+                position/array is left corrupted on return, which crashes
+                when lightbars are enabled. }
+              FOR LBCounter := 1 TO 50 DO
+                SaveLightBarArray[LBCounter] := LightBarArray[LBCounter];
+              SaveLightBarCmd := LightBarCmd;
+              SaveLightBarCounter := LightBarCounter;
+              SaveLightBarFirstCmd := LightBarFirstCmd;
               FArea := 1;
               NumFAreas := 0;
               LightBarCmd := 1;
@@ -629,25 +644,56 @@ BEGIN
                                        TRUE);
                         NL;
                         Prompt('^1Moving records: ');
+                        { Validate the SOURCE area and pull its extended
+                          description text first, while FileArea/FileInfoFile
+                          are still known-good and nothing has been changed. }
                         FileArea := SaveFileArea;
                         InitFileArea(FileArea);
                         IF (BadDownloadPath) THEN
-                          Exit;
-                        IF (FileInfo.VPointer <> -1) THEN
-                          LoadVerbArray(FileInfo,ExtendedArray,NumExtDesc);
-                        Deleteff(FileInfo,DirFileRecNum);
-                        FileArea := NewFileArea;
-                        InitFileArea(FileArea);
-                        IF (BadDownloadPath) THEN
-                          Exit;
-                        IF (FileInfo.VPointer <> -1) THEN
-                          SaveVerbArray(FileInfo,ExtendedArray,NumExtDesc);
-                        Seek(FileInfoFile,FileSize(FileInfoFile));
-                        Write(FileInfoFile,FileInfo);
-                        FileArea := SaveFileArea;
-                        InitFileArea(FileArea);
-                        Dec(LastDIRRecNum);
-                        Print('Done!^0');
+                          Print('^8Source file area has an invalid path - move aborted!^0')
+                        ELSE
+                        BEGIN
+                          IF (FileInfo.VPointer <> -1) THEN
+                            LoadVerbArray(FileInfo,ExtendedArray,NumExtDesc);
+                          { Now validate the DESTINATION area BEFORE deleting
+                            anything from the source. If this fails, restore
+                            FileArea back to the source and abort cleanly -
+                            never Exit here, or the source record ends up
+                            deleted with nothing written to the destination
+                            and FileArea/FileInfoFile left on the wrong area
+                            for the caller. }
+                          FileArea := NewFileArea;
+                          InitFileArea(FileArea);
+                          IF (BadDownloadPath) THEN
+                          BEGIN
+                            Print('^8Destination file area has an invalid path - move aborted!^0');
+                            FileArea := SaveFileArea;
+                            InitFileArea(FileArea);
+                          END
+                          ELSE
+                          BEGIN
+                            IF (FileInfo.VPointer <> -1) THEN
+                              SaveVerbArray(FileInfo,ExtendedArray,NumExtDesc);
+                            Seek(FileInfoFile,FileSize(FileInfoFile));
+                            Write(FileInfoFile,FileInfo);
+                            { Destination write succeeded - safe to remove
+                              the record from the source area now. }
+                            FileArea := SaveFileArea;
+                            InitFileArea(FileArea);
+                            Deleteff(FileInfo,DirFileRecNum);
+                            InitFileArea(FileArea);
+                            Dec(LastDIRRecNum);
+                            Print('Done!^0');
+                            { With lightbars on, the listing redraw that
+                              follows would otherwise wipe this message
+                              before it's ever seen - the non-lightbar path
+                              doesn't have this problem since it pauses
+                              naturally via the normal more-prompt. }
+                            IF (OkANSI) AND (General.UseLightBars) AND
+                               (LightBars IN ThisUser.SFlags) THEN
+                              InKey;
+                          END;
+                        END;
                         Cmd := 'N';
                         END
                         ELSE
@@ -667,6 +713,11 @@ BEGIN
               TempPause := SaveTempPause;
               FileArea := SaveFileArea;
               LoadFileArea(FileArea);
+              FOR LBCounter := 1 TO 50 DO
+                LightBarArray[LBCounter] := SaveLightBarArray[LBCounter];
+              LightBarCmd := SaveLightBarCmd;
+              LightBarCounter := SaveLightBarCounter;
+              LightBarFirstCmd := SaveLightBarFirstCmd;
             END;
       'P' : ;
       'Q' : Abort := TRUE;
