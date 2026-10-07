@@ -720,13 +720,15 @@ VAR
   MHeader: MHeaderRec;
   FileInfo: FileInfoRecordType;
   TransferFlags: TransferFlagSet;
-  MsgTxtStr: AStr;
+  MsgTxtStr: STRING;  { was AStr (160): stored lines are up to 255 bytes }
   FileOwner: Str36;
   DS: DirStr;
   NS: NameStr;
   ES: ExtStr;
   SaveFileArea: Integer;
   TempTextSize: Word;
+  AnsiMsg,
+  Continued: Boolean;
 BEGIN
   AllowAbort := (CoSysOp) OR (NOT (MAForceRead IN MemMsgArea.MAFlags));
   AllowContinue := TRUE;
@@ -772,6 +774,8 @@ BEGIN
     TempTextSize := 0;
     Abort := FALSE;
     Next := FALSE;
+    AnsiMsg := FALSE;
+    Continued := FALSE;
     {UserColor(MemMsgArea.Text_Color);}
     IF (MHeader.TextSize > 0) THEN
       IF (((MHeader.Pointer - 1) + MHeader.TextSize) <= FileSize(MsgTxtF)) AND (MHeader.Pointer > 0) THEN
@@ -787,19 +791,37 @@ BEGIN
             TempTextSize := MHeader.TextSize;
           END;
           Inc(TempTextSize,(Length(MsgTxtStr) + 1));
-          IF (' * Origin: ' = Copy(MsgTxtStr,1,11)) THEN
-            SetC(MemMsgArea.Origin_Color)
-          ELSE IF ('---'= Copy(MsgTxtStr,1,3)) AND ((Length(MsgTxtStr) = 3) OR (MsgTxtStr[4] <> '-')) THEN
-            SetC(MemMsgArea.Tear_Color)
-          ELSE IF (Pos('> ',Copy(MsgTxtStr,1,5)) > 0) THEN
-            SetC(MemMsgArea.Quote_Color)
-          ELSE IF (Pos(#254,Copy(MsgTxtStr,1,5)) > 0) THEN {LeeW: ?}
-            SetC(MemMsgArea.Tear_Color)
-          ELSE
-            SetC(MemMsgArea.Text_Color);
+          { Once a message contains raw ANSI, stop injecting our own colour codes
+            and stop pausing: both land in the middle of the artwork.  Never
+            touch colour on a #29 continuation chunk - it may be the second half
+            of a split escape sequence.                                        }
+          IF (Pos(#27,MsgTxtStr) > 0) AND (NOT AnsiMsg) THEN
+          BEGIN
+            AnsiMsg := TRUE;
+            TempPause := FALSE;
+          END;
+          IF (NOT AnsiMsg) AND (NOT Continued) THEN
+            IF (' * Origin: ' = Copy(MsgTxtStr,1,11)) THEN
+              SetC(MemMsgArea.Origin_Color)
+            ELSE IF ('---'= Copy(MsgTxtStr,1,3)) AND ((Length(MsgTxtStr) = 3) OR (MsgTxtStr[4] <> '-')) THEN
+              SetC(MemMsgArea.Tear_Color)
+            ELSE IF (Pos('> ',Copy(MsgTxtStr,1,5)) > 0) THEN
+              SetC(MemMsgArea.Quote_Color)
+            ELSE IF (Pos(#254,Copy(MsgTxtStr,1,5)) > 0) THEN {LeeW: ?}
+              SetC(MemMsgArea.Tear_Color)
+            ELSE
+              SetC(MemMsgArea.Text_Color);
+          Continued := (Length(MsgTxtStr) > 0) AND (MsgTxtStr[Length(MsgTxtStr)] = #29);
 
           PrintACR(MsgTxtStr);
         UNTIL (TempTextSize >= MHeader.TextSize) OR (Abort) OR (HangUp);
+        { The art changed the terminal's colours behind SetC's back; reset both
+          the terminal and our idea of the current colour.                   }
+        IF (AnsiMsg) AND (OkANSI) THEN
+        BEGIN
+          Prompt(#27+'[0m');
+          CurrentColor := 7;
+        END;
       END;
     MCIAllowed := TRUE;
     Reading_A_Msg := FALSE;

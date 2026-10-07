@@ -53,7 +53,8 @@ var
     Year, Month, MDay, WDay, attribute : Word;
     ispm : boolean;
     dirinfo : searchrec;
-    s, s3,startdir, nos, datapath, msgpath, netmailpath : string [81];
+    s, s3,startdir, datapath, msgpath, netmailpath : string [81];
+    nos : string;  { was string[81]; word-wrap carry-over overflowed it }
     msgtxt : string [255];
     buffer : array [1..32767] of char;
     fcb : array [1..37] of char;
@@ -220,7 +221,7 @@ begin
     inc (i);
     case o [i] of
      #128..#255:if (mafilter in boardr.maflags) then
-                  s := s + chr(ord(o[i]) and 128)
+                  s := s + chr(ord(o[i]) and 127)
                 else
                   s := s + o[i];
      '^' : if o [i + 1] in [#0..#9, '0'..'9'] then
@@ -307,7 +308,7 @@ FColor:=8;
     WriteCharXY(#205,X,4,FColor,Black);
   WriteCharXY(#185,80,4,FColor,Black);
   GetDate(Year,Month,MDay,WDay);
-  WriteStrXY(CenterStr('Renegade Echomail Interface v1.40/DOS'),2,2,11,Black);
+  WriteStrXY(CenterStr('Renegade Echomail Interface v'+Ver),2,2,11,Black);
   WriteStrXY(CenterStr('Copyright (c) 1991-'+IntToString(Year)+' The Renegade Development Team'),2,3,3,Black);
   FOR Y := 5 TO 21 DO
   BEGIN
@@ -392,9 +393,78 @@ END;
 
 
 
+{ ---- Boxed screen: output scrolls inside the box, messages go to the
+       'Message:' field on row 23. ---------------------------------------- }
+
+CONST
+  BoxActive: Boolean = FALSE;   { TRUE once the frame is on screen }
+  MsgCol   = 12;                { 'Message: ' field start column    }
+  MsgRow   = 23;
+  MsgWidth = 68;                { cols 12..79 (col 80 is the frame)  }
+
+VAR
+  SaveExitProc: Pointer;
+
+PROCEDURE StatusMsg(S: STRING; FColor: Byte);
+VAR
+  SaveX,
+  SaveY,
+  SaveAttr: Byte;
+BEGIN
+  IF (NOT BoxActive) THEN
+  BEGIN
+    WriteLn(S);
+    Exit;
+  END;
+  SaveX := WhereX;
+  SaveY := WhereY;
+  SaveAttr := TextAttr;
+  IF (Length(S) > MsgWidth) THEN
+    S[0] := Chr(MsgWidth);
+  WHILE (Length(S) < MsgWidth) DO      { pad to wipe the previous message }
+    S := S + ' ';
+  Window(1,1,80,25);
+  GotoXY(MsgCol,MsgRow);
+  TextColor(FColor);
+  TextBackGround(Black);
+  Write(S);
+  Window(2,5,78,21);
+  GotoXY(SaveX,SaveY);
+  TextAttr := SaveAttr;
+END;
+
+FUNCTION HexW(W: Word): STRING;
+CONST
+  Digits: ARRAY [0..15] OF Char = '0123456789ABCDEF';
+BEGIN
+  HexW := Digits[W SHR 12] + Digits[(W SHR 8) AND 15] +
+          Digits[(W SHR 4) AND 15] + Digits[W AND 15];
+END;
+
+{ Runs on every exit (normal end, Halt, or runtime error): put any runtime
+  error on the message line and leave the cursor below the box for DOS. }
+PROCEDURE RenemailExit; FAR;
+BEGIN
+  ExitProc := SaveExitProc;
+  IF (BoxActive) THEN
+  BEGIN
+    IF (ErrorAddr <> NIL) THEN
+    BEGIN
+      StatusMsg('Runtime error ' + IntToString(ExitCode) + ' at ' +
+                HexW(Seg(ErrorAddr^)) + ':' + HexW(Ofs(ErrorAddr^)), 12);
+      ErrorAddr := NIL;
+    END;
+    BoxActive := FALSE;
+    Window(1,1,80,25);
+    TextColor(LightGray);
+    TextBackGround(Black);
+    GotoXY(1,25);
+  END;
+END;
+
 procedure aborterror(const s:string);
 begin
-  writeln(s);
+  StatusMsg(s, 12);
   halt(2);
 end;
 
@@ -467,8 +537,8 @@ end;
 
      procedure badpath(const s:string);
      begin
-       writeln('The ',s,' path is bad.  Please correct it.');
-       halt;
+       StatusMsg('The ' + s + ' path is bad.  Please correct it.', 12);
+       halt(1);
      end;
 
   begin
@@ -477,7 +547,7 @@ end;
     reset (statusf);
     if (ioresult <> 0) or (s = '') then
       begin
-        writeln ('RENEGADE.DAT must be in the current directory or the path.');
+        StatusMsg('RENEGADE.DAT must be in the current directory or the path.', 12);
         halt (1);
       end;
     read (statusf, statusr);
@@ -681,7 +751,7 @@ end;
         i := ioresult;
         if i <> 0 then
           begin
-            writeln (i,':Problem accessing ' + datapath + 'MBASES.DAT. Please fix.');
+            StatusMsg(cstr(i) + ': Problem accessing ' + datapath + 'MBASES.DAT. Please fix.', 12);
             halt (1);
           end;
       end;
@@ -727,6 +797,8 @@ end;
       z:string [20];
       istossed:boolean;
       left, right, gap, oldgap : integer;
+      k : integer;
+      IsAnsiLine, ContAnsi : boolean;
   begin
        istossed:=false;
        msghdr.from.anon := 0;
@@ -768,21 +840,41 @@ end;
                   textsize := 0;
                   msgpointer := 0;
                   nos := '';
+                  ContAnsi := FALSE;
                   while (msgpointer < msglength) do begin
                     msgtxt := nos;
+                    { Decide up front whether this physical line (up to the next CR)
+                      carries ANSI.  The old test only looked at what had been read
+                      so far, and the word-wrap below ignored it altogether.         }
+                    IsAnsiLine := ContAnsi or (pos(#27, msgtxt) > 0);
+                    if not IsAnsiLine then
+                      begin
+                        k := msgpointer + 1;
+                        while (k <= msglength) and (buffer[k] <> #13) do
+                          begin
+                            if (buffer[k] = #27) then
+                              begin
+                                IsAnsiLine := TRUE;
+                                break;
+                              end;
+                            inc(k);
+                          end;
+                      end;
                     repeat
                       inc (msgpointer);
                       c := buffer [msgpointer];
-                      if not (c in [#0, #10, #13, #141]) then
+                      { #141 (8Dh) is a soft-CR in plain text, but in ANSI art it is
+                        the CP437 glyph and must be kept as a character.            }
+                      if not ((c in [#0, #10, #13]) or ((c = #141) and not IsAnsiLine)) then
                         if (length(msgtxt) < 255) then  {msgtxt := msgtxt + c;}
                           begin
                             inc(msgtxt[0]);
                             msgtxt[length(msgtxt)] := c;
                           end;
                     until (
-                          (nos = #13) or (c in [#13,#141])
+                          (c = #13) or ((c = #141) and not IsAnsiLine)
                           or
-                          ((length(msgtxt) > 79) and (pos(#27, msgtxt) = 0))
+                          ((length(msgtxt) > 79) and not IsAnsiLine)
                           or
                           (length(msgtxt) = 254)
                           or
@@ -834,7 +926,14 @@ end;
                         msghdr.from.point := value(z);
                       end;
 
-                    if (length (msgtxt) > 79) then
+                    { 254-byte chunk of a longer line: #29 tells the reader to join it
+                      to the next chunk with no CR, so carry the ANSI state across. }
+                    ContAnsi := IsAnsiLine and (msgtxt[length(msgtxt)] = #29);
+
+                    { Word-wrap plain text only.  Wrapping an ANSI line inserts a hard
+                      CR mid-row (and could cut an escape sequence in half).        }
+                    if (length (msgtxt) > 79) and (not IsAnsiLine) and
+                       (msgtxt[length(msgtxt)] <> #29) then
                       begin
                         i := length (msgtxt);
                         while (msgtxt [i] = ' ') and (i > 1) do
@@ -842,10 +941,16 @@ end;
                         while (i > 65) and (msgtxt [i] <> ' ') do
                           dec (i);
 
-                        nos[0] := chr(length(msgtxt) - i);
-                        move(msgtxt[i + 1], nos[1], length(msgtxt) - i);
-                        msgtxt[0] := chr(i - 1);
-
+                        if (msgtxt [i] = ' ') then
+                          begin  { break at the space, drop the space }
+                            nos := copy(msgtxt, i + 1, 255);
+                            msgtxt[0] := chr(i - 1);
+                          end
+                        else
+                          begin  { no space: hard break at col 79, lose nothing }
+                            nos := copy(msgtxt, 80, 255);
+                            msgtxt[0] := #79;
+                          end;
                       end
                     else
                       nos := '';
@@ -909,7 +1014,8 @@ end;
        msgnumber := highest;
        if (not existdir(boardr.msgpath)) then
          begin
-           writeln('WARNING: Cannot access ', boardr.msgpath);
+           write ('Skipped');
+           StatusMsg('WARNING: Cannot access ' + boardr.msgpath, 14);
            exit;
          end;
 
@@ -1052,21 +1158,27 @@ end;
               j := 0;
               if (msghdr.textsize) > 0 then
               repeat
-                blockread (msgtxtf, s [0], 1);
-                blockread (msgtxtf, s [1], ord (s [0]) );
-                inc (j, length (s) + 1);
-                while pos(#0,s) > 0 do
-                  delete(s,pos(#0,s),1);
-                if s [length (s) ] = #29 then
-                  dec(s[0])
+                { msgtxt is string[255]; s is only string[81] and overflowed here }
+                blockread (msgtxtf, msgtxt [0], 1);
+                blockread (msgtxtf, msgtxt [1], ord (msgtxt [0]) );
+                inc (j, length (msgtxt) + 1);
+                while pos(#0,msgtxt) > 0 do
+                  delete(msgtxt,pos(#0,msgtxt),1);
+                if (length (msgtxt) > 0) and (msgtxt [length (msgtxt) ] = #29) then
+                  begin  { soft continuation: write it with NO CR }
+                    dec(msgtxt[0]);
+                    blockwrite (msgtfile, msgtxt [1], length (msgtxt) );
+                  end
                 else
-                  if pos (#27, s) = 0 then
-                    s := stripcolor(s)
-                  else
-                    AnsiOn := TRUE;
-                s := s + #13;
-                if length(s)<81 then
-                 blockwrite (msgtfile, s [1], length (s) );
+                  begin
+                    if pos (#27, msgtxt) = 0 then
+                      msgtxt := stripcolor(msgtxt)
+                    else
+                      AnsiOn := TRUE;
+                    blockwrite (msgtfile, msgtxt [1], length (msgtxt) );
+                    c := #13;
+                    blockwrite (msgtfile, c, 1);
+                  end;
               until (j >= msghdr.textsize) or (j>16383);
               close (msgtfile);
               write (#8#8#8#8#8#8#8);
@@ -1133,6 +1245,17 @@ DisplayHelp(White,Black);
   if paramstr (1) = '' then
     HaltErrorStrXY('No Command Line Parameters Specified!',12,23,Red + 128,Black,1);
    end;
+
+  { Same frame as the help screen; work scrolls inside the box }
+  DisplayMain(White,Black);
+  BoxActive := TRUE;
+  SaveExitProc := ExitProc;
+  ExitProc := @RenemailExit;
+  s := 'RENEMAIL';
+  for i := 1 to paramcount do
+    s := s + ' ' + paramstr(i);
+  StatusMsg('Running: ' + s, 15);
+  textcolor (11);
   assign (sf,'RENEMAIL.!!!');
   if ioresult=0 then
    begin
@@ -1195,7 +1318,8 @@ DisplayHelp(White,Black);
        isnetmail := FALSE;
     end;
 
-  if netmailonly then halt;
+  if netmailonly then
+    board := 32767;   { skip echo areas; was Halt, which left RENEMAIL.!!! behind }
 
   while board <> 32767 do begin
        slice; (* Nick *)
@@ -1220,4 +1344,6 @@ DisplayHelp(White,Black);
   chdir (startdir);
   assign(sf,'RENEMAIL.!!!');
   erase (sf);
+  i := ioresult;
+  StatusMsg('Done.', 10);
 end.
