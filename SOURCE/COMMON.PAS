@@ -801,7 +801,7 @@ BEGIN
       ToggleBack := TRUE;
       ToggleWindow(FALSE);
     END;
-  IF (OkANSI) AND (ComPortSpeed>0) THEN
+  IF (OkANSI) THEN
     SerialOut(#27+'['+IntToStr(Y)+';'+IntToStr(X)+'H');
   IF (WantOut) THEN
     GoToXY(X,Y);
@@ -2594,8 +2594,8 @@ BEGIN
              IF (((CurrentColor SHR 4) AND 7) > 0) OR (CurrentColor AND 128 = 128) THEN
                SetC(Scheme.Color[1])
            END
-           ELSE
-             LIL := 1;
+           ELSE IF (NOT Reading_A_Msg) OR (InChat) OR (Write_Msg) OR (CtrlJOff) THEN
+             LIL := 1;  { ANSI screens/files never page; but a message being read DOES, so art isn't scrolled past }
            IF (Trapping) THEN
              OutTrap(c);
            IF (WantOut) THEN

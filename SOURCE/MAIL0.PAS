@@ -728,7 +728,123 @@ VAR
   SaveFileArea: Integer;
   TempTextSize: Word;
   AnsiMsg,
-  Continued: Boolean;
+  Continued,
+  LineEsc,
+  IsTrailer,
+  ArtLive,
+  ArtPriv,
+  ArtHave: Boolean;
+  ArtState: Byte;                { 0=text, 1=saw ESC, 2=inside ESC[ ... }
+  ArtNum: Integer;
+  ArtN: Byte;
+  ArtP: ARRAY[1..16] OF Integer;
+
+  { Apply the collected SGR (ESC[..m) parameters to CurrentColor so that it always
+    mirrors what the terminal is really showing while ANSI art is on screen.  That
+    keeps SetC diffs and the pause-prompt colour restore correct.                    }
+  PROCEDURE ArtSGR;
+  CONST
+    AnsiToCrt: ARRAY[0..7] OF Byte = (0,4,2,6,1,5,3,7);
+  VAR
+    i: Byte;
+    p: Integer;
+    c: Byte;
+  BEGIN
+    c := CurrentColor;
+    IF (ArtN = 0) THEN
+    BEGIN
+      ArtN := 1;
+      ArtP[1] := 0;
+    END;
+    i := 1;
+    WHILE (i <= ArtN) DO
+    BEGIN
+      p := ArtP[i];
+      CASE p OF
+        0       : c := 7;
+        1       : c := c OR $08;
+        2,22    : c := c AND $F7;
+        5,6     : c := c OR $80;
+        25      : c := c AND $7F;
+        30..37  : c := (c AND $F8) OR AnsiToCrt[p - 30];
+        39      : c := (c AND $F8) OR 7;
+        40..47  : c := (c AND $8F) OR (AnsiToCrt[p - 40] SHL 4);
+        49      : c := c AND $8F;
+        90..97  : c := (c AND $F0) OR $08 OR AnsiToCrt[p - 90];
+        38,48   : IF (i < ArtN) THEN
+                    IF (ArtP[i + 1] = 5) THEN
+                      Inc(i,2)
+                    ELSE IF (ArtP[i + 1] = 2) THEN
+                      Inc(i,4);
+      END;
+      Inc(i);
+    END;
+    CurrentColor := c;
+  END;
+
+  { Walk a message line character by character; state survives across #29 continuation chunks. }
+  PROCEDURE ArtScan(CONST S: STRING);
+  VAR
+    i: Word;
+    ch: Char;
+  BEGIN
+    FOR i := 1 TO Length(S) DO
+    BEGIN
+      ch := S[i];
+      CASE ArtState OF
+        0 : IF (ch = #27) THEN
+              ArtState := 1;
+        1 : IF (ch = '[') THEN
+            BEGIN
+              ArtState := 2;
+              ArtN := 0;
+              ArtNum := 0;
+              ArtHave := FALSE;
+              ArtPriv := FALSE;
+            END
+            ELSE IF (ch <> #27) THEN
+              ArtState := 0;
+        2 : IF (ch IN ['0'..'9']) THEN
+            BEGIN
+              ArtNum := (ArtNum * 10) + (Ord(ch) - 48);
+              IF (ArtNum > 999) THEN
+                ArtNum := 999;
+              ArtHave := TRUE;
+            END
+            ELSE IF (ch = ';') THEN
+            BEGIN
+              IF (ArtN < 16) THEN
+              BEGIN
+                Inc(ArtN);
+                ArtP[ArtN] := ArtNum;
+              END;
+              ArtNum := 0;
+              ArtHave := FALSE;
+            END
+            ELSE IF (ch IN ['<'..'?']) THEN
+              ArtPriv := TRUE
+            ELSE IF (ch IN [#32..#47]) THEN
+              { intermediate byte - keep going }
+            ELSE IF (ch = #27) THEN
+              ArtState := 1
+            ELSE
+            BEGIN
+              { final byte }
+              IF (ch = 'm') AND (NOT ArtPriv) THEN
+              BEGIN
+                IF ((ArtHave) OR (ArtN > 0)) AND (ArtN < 16) THEN
+                BEGIN
+                  Inc(ArtN);
+                  ArtP[ArtN] := ArtNum;
+                END;
+                ArtSGR;
+              END;
+              ArtState := 0;
+            END;
+      END;
+    END;
+  END;
+
 BEGIN
   AllowAbort := (CoSysOp) OR (NOT (MAForceRead IN MemMsgArea.MAFlags));
   AllowContinue := TRUE;
@@ -776,6 +892,12 @@ BEGIN
     Next := FALSE;
     AnsiMsg := FALSE;
     Continued := FALSE;
+    ArtLive := FALSE;
+    ArtState := 0;
+    ArtN := 0;
+    ArtNum := 0;
+    ArtHave := FALSE;
+    ArtPriv := FALSE;
     {UserColor(MemMsgArea.Text_Color);}
     IF (MHeader.TextSize > 0) THEN
       IF (((MHeader.Pointer - 1) + MHeader.TextSize) <= FileSize(MsgTxtF)) AND (MHeader.Pointer > 0) THEN
@@ -791,35 +913,61 @@ BEGIN
             TempTextSize := MHeader.TextSize;
           END;
           Inc(TempTextSize,(Length(MsgTxtStr) + 1));
-          { Once a message contains raw ANSI, stop injecting our own colour codes
-            and stop pausing: both land in the middle of the artwork.  Never
-            touch colour on a #29 continuation chunk - it may be the second half
-            of a split escape sequence.                                        }
-          IF (Pos(#27,MsgTxtStr) > 0) AND (NOT AnsiMsg) THEN
-          BEGIN
+          { ANSI art: pausing stays ON (paging is handled in OutKey, which now counts
+            lines while a message is being read).  Colour handling:
+              - CurrentColor is kept in step with the art's own SGR codes (ArtScan),
+                so SetC diffs and the pause prompt's colour restore stay correct.
+              - A line carrying ESC is never recoloured, and neither is a plain line
+                while the art has a non-default colour in force (art relies on
+                colour persisting across lines).
+              - Origin/tear lines, and plain text once the art is back to the
+                default attribute, get the message base colours as normal.
+              - #29 continuation chunks are never recoloured (may be half an escape). }
+          LineEsc := (ArtState <> 0) OR (Pos(#27,MsgTxtStr) > 0);
+          IF (LineEsc) THEN
             AnsiMsg := TRUE;
-            TempPause := FALSE;
+          IF (NOT Continued) THEN
+          BEGIN
+            IsTrailer := (' * Origin: ' = Copy(MsgTxtStr,1,11)) OR
+                         (('---'= Copy(MsgTxtStr,1,3)) AND ((Length(MsgTxtStr) = 3) OR (MsgTxtStr[4] <> '-')));
+            IF (LineEsc) THEN
+            BEGIN
+              IF (NOT ArtLive) THEN
+                SetC(7);      { art is authored against the default attribute }
+              ArtLive := TRUE;
+            END
+            ELSE IF (NOT AnsiMsg) OR (IsTrailer) OR (CurrentColor = 7) THEN
+            BEGIN
+              ArtLive := FALSE;
+              IF (' * Origin: ' = Copy(MsgTxtStr,1,11)) THEN
+                SetC(MemMsgArea.Origin_Color)
+              ELSE IF ('---'= Copy(MsgTxtStr,1,3)) AND ((Length(MsgTxtStr) = 3) OR (MsgTxtStr[4] <> '-')) THEN
+                SetC(MemMsgArea.Tear_Color)
+              ELSE IF (Pos('> ',Copy(MsgTxtStr,1,5)) > 0) THEN
+                SetC(MemMsgArea.Quote_Color)
+              ELSE IF (Pos(#254,Copy(MsgTxtStr,1,5)) > 0) THEN {LeeW: ?}
+                SetC(MemMsgArea.Tear_Color)
+              ELSE
+                SetC(MemMsgArea.Text_Color);
+            END;
           END;
-          IF (NOT AnsiMsg) AND (NOT Continued) THEN
-            IF (' * Origin: ' = Copy(MsgTxtStr,1,11)) THEN
-              SetC(MemMsgArea.Origin_Color)
-            ELSE IF ('---'= Copy(MsgTxtStr,1,3)) AND ((Length(MsgTxtStr) = 3) OR (MsgTxtStr[4] <> '-')) THEN
-              SetC(MemMsgArea.Tear_Color)
-            ELSE IF (Pos('> ',Copy(MsgTxtStr,1,5)) > 0) THEN
-              SetC(MemMsgArea.Quote_Color)
-            ELSE IF (Pos(#254,Copy(MsgTxtStr,1,5)) > 0) THEN {LeeW: ?}
-              SetC(MemMsgArea.Tear_Color)
-            ELSE
-              SetC(MemMsgArea.Text_Color);
           Continued := (Length(MsgTxtStr) > 0) AND (MsgTxtStr[Length(MsgTxtStr)] = #29);
+
+          { Track the art's colour changes BEFORE printing the line: a page pause
+            fires on this line's final line feed, and must see the post-line state. }
+          IF (LineEsc) THEN
+            ArtScan(MsgTxtStr);
 
           PrintACR(MsgTxtStr);
         UNTIL (TempTextSize >= MHeader.TextSize) OR (Abort) OR (HangUp);
-        { The art changed the terminal's colours behind SetC's back; reset both
-          the terminal and our idea of the current colour.                   }
-        IF (AnsiMsg) AND (OkANSI) THEN
+        { Leave the terminal (and the local ANSI parser) in a clean default state,
+          even if the art was truncated mid-escape or the reader aborted.        }
+        IF (AnsiMsg) THEN
         BEGIN
-          Prompt(#27+'[0m');
+          NextState := Waiting;
+          Reverse := FALSE;
+          IF (OkANSI) THEN
+            Prompt(#27+'[0m');
           CurrentColor := 7;
         END;
       END;
